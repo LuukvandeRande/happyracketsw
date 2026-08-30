@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HappyRacket Tuning Pro</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#262E44">
+    <script>
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('sw.js');
+      }
+    </script>
+</head>
+<body>
+    <div id="app">
+        <!-- Header met HappyRacket Logo en Titel -->
+        <div id="header">
+            <div class="brand-container">
+                <img src="logo.png" alt="HappyRacket Logo" class="header-logo">
+                <span class="brand-title">HappyRacket</span>
+            </div>
+        </div>
+
+        <!-- Pagina Container -->
+        <div id="pages-container">
+            <!-- 1. Meetpagina -->
+            <div id="measurePage" class="page active">
+                <div class="mode-switch-bar">
+                    <button type="button" class="mode-btn active" id="modeSWBtn" data-i18n="modeSW">1. Swingweight (SW)</button>
+                    <button type="button" class="mode-btn" id="modeTwistBtn" data-i18n="modeTW">2. Twistweight (TW)</button>
+                </div>
+
+                <div class="dual-metric-overview">
+                    <div class="metric-card active" id="cardSW">
+                        <span class="metric-title" data-i18n="swTitle">Swingweight</span>
+                        <span class="metric-val" id="valOverviewSW">-</span>
+                        <span class="metric-unit">kg·cm²</span>
+                    </div>
+                    <div class="metric-card" id="cardTW">
+                        <span class="metric-title" data-i18n="twTitle">Twistweight</span>
+                        <span class="metric-val" id="valOverviewTW">-</span>
+                        <span class="metric-unit">kg·cm²</span>
+                    </div>
+                </div>
+
+                <div class="specs-bar">
+                    <div class="spec-input-group">
+                        <label data-i18n="mass">Massa (g)</label>
+                        <input type="number" id="racketMass" value="305" step="0.5">
+                    </div>
+                    <div class="spec-input-group">
+                        <label data-i18n="balance">Balans (cm)</label>
+                        <input type="number" id="racketBalance" value="32.0" step="0.1">
+                    </div>
+                </div>
+
+                <div id="main-display">
+                    <span class="active-mode-badge" id="activeModeBadge" data-i18n="badgeSW">SWINGWEIGHT METING</span>
+                    <p class="current-value" id="currentDisplayValue">0.0</p>
+                    <span class="sub-specs-display" id="subSpecsDisplay">
+                        I_cm: <strong id="valIcm">-</strong> | Recoil: <strong id="valRecoil">-</strong>
+                    </span>
+                    <button id="mainActionBtn" class="main-action-btn" data-i18n="btnHold">Hold at 45°</button>
+                    <p id="statusMessage" class="status-message"></p>
+                </div>
+
+                <div class="save-box">
+                    <input type="text" id="racketNameInput" data-i18n-placeholder="saveNew" placeholder="Nieuw Racket Opslaan..." class="dark-input">
+                    <button id="btnSaveRacket" class="save-btn" data-i18n="saveDb">Opslaan in DB</button>
+                </div>
+
+                <div class="measurement-groups">
+                    <h2 class="section-title" id="historySectionTitle" data-i18n="historyTitleSW">SWINGWEIGHT MEETREEKS</h2>
+                    <div class="group-stats">
+                        <div class="stat-item">
+                            <span class="stat-label" data-i18n="count">Aantal</span>
+                            <span class="stat-value" id="groupCount">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label" data-i18n="mean">Gemiddelde</span>
+                            <span class="stat-value" id="groupMean">-</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label" data-i18n="diff">Verschil</span>
+                            <span class="stat-value" id="groupDifference">-</span>
+                        </div>
+                    </div>
+                    <div id="measurementList" class="measurement-list"></div>
+                </div>
+                <button id="addMeasurementBtn" class="add-measurement-btn" title="Reset actieve meetgroep">+</button>
+            </div>
+
+            <!-- 2. Database Pagina -->
+            <div id="databasePage" class="page">
+                <h1 class="page-title" data-i18n="dbTitle">RACKET DATABASE</h1>
+                
+                <div style="display:flex; gap:8px; margin-bottom:12px;">
+                    <button id="btnExportCSV" class="cal-action-btn" style="flex:1;" data-i18n="exportCsv">Exporteer CSV</button>
+                    <input type="file" id="csvFileInput" accept=".csv" style="display: none;">
+                    <button id="btnImportCSV" class="cal-action-btn" style="flex:1; background:var(--brand-teal); color:#fff;" data-i18n="importCsv">Importeer CSV</button>
+                </div>
+
+                <h2 class="section-title" data-i18n="dbSub">OPGESLAGEN RACKETS</h2>
+                <div id="databaseList" class="db-list"></div>
+            </div>
+
+            <!-- 3. AI Tuning Coach Tabblad -->
+            <div id="aiPage" class="page">
+                <h1 class="page-title" data-i18n="aiTitle">HAPPYRACKET AI</h1>
+                
+                <div class="modal-card">
+                    <span class="card-title-text" style="display:block; margin-bottom:6px;" data-i18n="aiSelect">Selecteer Racket & Doelen</span>
+                    <select id="aiSelectRacket" class="dark-select" style="margin-bottom:6px;">
+                        <option value="" data-i18n="dbEmptyOption">-- Kies een racket uit Database --</option>
+                    </select>
+
+                    <div class="tuning-input-grid" style="margin-bottom: 6px;">
+                        <div>
+                            <label data-i18n="targetMass">Doel Gram</label>
+                            <input type="number" id="aiTargetMass" class="dark-input" placeholder="0" step="0.5">
+                        </div>
+                        <div>
+                            <label data-i18n="targetBal">Doel Balans (cm)</label>
+                            <input type="number" id="aiTargetBal" class="dark-input" placeholder="0" step="0.1">
+                        </div>
+                    </div>
+                    <div class="tuning-input-grid">
+                        <div>
+                            <label data-i18n="targetSW">Doel SW</label>
+                            <input type="number" id="aiTargetSW" class="dark-input" placeholder="0" step="1">
+                        </div>
+                        <div>
+                            <label data-i18n="targetTW">Doel TW</label>
+                            <input type="number" id="aiTargetTW" class="dark-input" placeholder="0" step="0.1">
+                        </div>
+                    </div>
+                    <button id="btnStartAICoach" class="save-btn primary" style="width:100%; margin-top:10px;" data-i18n="aiBtn">Start Tuning Analyse</button>
+                </div>
+
+                <div id="aiChatContainer" class="chat-container">
+                    <div class="chat-msg ai-msg" id="aiWelcomeBox">
+                        <strong>HappyRacket AI:</strong><br><br><span data-i18n="aiGreeting">Hallo! Selecteer hierboven een racket en vul optioneel je targets in, of vraag me direct om advies over loodverdeling, snaren en balansaanpassingen!</span>
+                    </div>
+                </div>
+
+                <div class="chat-input-row">
+                    <input type="text" id="aiChatInput" data-i18n-placeholder="aiPlaceholder" placeholder="Typ je vraag..." class="dark-input">
+                    <button id="btnSendChat" class="save-btn" style="background:var(--brand-teal);">Stuur</button>
+                </div>
+            </div>
+
+            <!-- 4. Kalibratiepagina -->
+            <div id="calibratePage" class="page">
+                <h1 class="page-title" data-i18n="calTitle">MACHINE KALIBRATIE</h1>
+                
+                <div class="calibration-section">
+                    <h2 class="section-title" data-i18n="calStep1">STAP 1: LEGE KLEM METING</h2>
+                    <div class="mol-display">
+                        <span class="mol-label" data-i18n="calT0Label">Periode Lege Klem (T₀)</span>
+                        <span id="calT0Display" class="mol-value">- s</span>
+                    </div>
+                    <button id="btnCalibrateT0" class="cal-action-btn" data-i18n="calT0Btn">Meet T₀ (Leeg)</button>
+                </div>
+
+                <div class="calibration-section">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <h2 class="section-title" style="margin: 0;" data-i18n="calStep2">STAP 2: KALIBRATIESTAAF</h2>
+                        <button id="infoToggleBtn" class="info-toggle-btn">ℹ</button>
+                    </div>
+
+                    <div id="rodInfoBox" class="info-collapsible">
+                        <p><strong data-i18n="rodInfo">Parameters kalibratiestaaf:</strong></p>
+                        <ul>
+                            <li data-i18n="rodMass"><strong>Massa (g):</strong> Gewicht van de staaf op weegschaal.</li>
+                            <li data-i18n="rodLength"><strong>Lengte (cm):</strong> Totale lengte van de staaf.</li>
+                            <li data-i18n="rodOffset"><strong>Offset d (cm):</strong> Afstand van midden staaf tot de rotatie-as.</li>
+                        </ul>
+                    </div>
+
+                    <div style="display: flex; gap: 8px; margin: 15px 0;">
+                        <div style="flex: 1; text-align: left;">
+                            <label style="font-size: 11px; color: var(--dark-text-secondary);" data-i18n="mass">Massa (g)</label>
+                            <input type="number" id="calRodMass" value="250" class="dark-input">
+                        </div>
+                        <div style="flex: 1; text-align: left;">
+                            <label style="font-size: 11px; color: var(--dark-text-secondary);">Length (cm)</label>
+                            <input type="number" id="calRodLength" value="50" class="dark-input">
+                        </div>
+                        <div style="flex: 1; text-align: left;">
+                            <label style="font-size: 11px; color: var(--dark-text-secondary);">Offset (cm)</label>
+                            <input type="number" id="calRodOffset" value="15" class="dark-input">
+                        </div>
+                    </div>
+                    <div class="mol-display">
+                        <span class="mol-label" data-i18n="calT1Label">Periode Teststaaf (T₁)</span>
+                        <span id="calT1Display" class="mol-value">- s</span>
+                    </div>
+                    <button id="btnCalibrateT1" class="cal-action-btn" data-i18n="calT1Btn">Meet T₁ (Met Staaf)</button>
+                </div>
+
+                <div class="calibration-result">
+                    <h2 class="section-title" style="margin: 0 0 10px 0;" data-i18n="calResults">RESULTATEN</h2>
+                    <p>Veerstijfheid (κ): <span id="calResultKappa" class="result-value">1.4710 Nm/rad</span></p>
+                    <p>Eigen traagheid (I₀): <span id="calResultI0" class="result-value">0.00500 kg·m²</span></p>
+                    <button id="btnSaveCalibration" class="save-btn primary" style="margin-top:15px; width:100%;" data-i18n="calSave">Kalibratie Opslaan</button>
+                </div>
+            </div>
+
+            <!-- 5. Instellingenpagina -->
+            <div id="settingsPage" class="page">
+                <h1 class="page-title" data-i18n="settingsTitle">INSTELLINGEN</h1>
+                
+                <div class="settings-group">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <p style="margin:0; font-weight:bold; color:var(--brand-teal);" data-i18n="langLabel">Taal / Language</p>
+                        <select id="languageSelect" class="dark-select" style="width:140px;">
+                            <option value="nl">Nederlands</option>
+                            <option value="en">English</option>
+                            <option value="de">Deutsch</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="settings-group">
+                    <p style="margin:0 0 6px 0; font-weight:bold; color:var(--brand-teal);" data-i18n="apiKeyLabel">Gemini API Key</p>
+                    <div style="display:flex; gap:6px;">
+                        <input type="password" id="apiKeyInput" class="dark-input" placeholder="Plak hier je Gemini API Key..." style="flex:1;">
+                        <button id="btnSaveApiKey" class="save-btn" data-i18n="saveKeyBtn">Opslaan</button>
+                    </div>
+                </div>
+
+                <div class="settings-group">
+                    <p>Machine Axis: <span class="setting-value">90.5 mm buttcap</span></p>
+                    <p>Standard Ref-Axis: <span class="setting-value">100.0 mm (10 cm)</span></p>
+                    <p>Steiner Correction: <span class="setting-value">Active</span></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- RACKET DETAIL & TUNING MODAL -->
+        <div id="racketDetailModal" class="modal-overlay">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <input type="text" id="modalRacketNameInput" class="dark-input" style="font-size:16px; font-weight:bold; width:80%; background:var(--dark-bg); border:1px solid var(--brand-teal); padding:6px 10px; color:var(--brand-green); border-radius:8px;">
+                    <button id="modalCloseBtn" class="modal-close-btn">&times;</button>
+                </div>
+                
+                <div class="modal-card">
+                    <div class="tuning-input-grid" style="margin-bottom: 8px;">
+                        <div>
+                            <label data-i18n="mass">Massa (g)</label>
+                            <input type="number" id="modalMassInput" class="dark-input" step="0.5">
+                        </div>
+                        <div>
+                            <label data-i18n="balance">Balans (cm)</label>
+                            <input type="number" id="modalBalanceInput" class="dark-input" step="0.1">
+                        </div>
+                    </div>
+                    <div class="tuning-input-grid">
+                        <div>
+                            <label>SW</label>
+                            <input type="number" id="modalSWInput" class="dark-input" step="0.1">
+                        </div>
+                        <div>
+                            <label>TW</label>
+                            <input type="number" id="modalTwistInput" class="dark-input" step="0.1">
+                        </div>
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <button id="btnOpenEditMeasurements" class="cal-action-btn" style="font-size:12px;" data-i18n="editMeasurementsBtn">Losse Metingen Bewerken</button>
+                    </div>
+                </div>
+
+                <div class="modal-card">
+                    <div class="card-title-row">
+                        <span class="card-title-text" data-i18n="modalStrungVsUnstrung">Bespannen vs Onbespannen</span>
+                        <div style="display:flex; align-items:center; gap:6px;">
+                            <button id="infoConversionBtn" class="info-toggle-btn">ℹ</button>
+                            <button id="btnToggleStrungState" class="mode-btn active" style="padding:4px 10px; font-size:10px;" data-i18n="modalStrung">Gemeten: Bespannen</button>
+                        </div>
+                    </div>
+                    <div id="infoConversionBox" class="info-collapsible" data-i18n="modalConvInfo">
+                        Berekent exact de invloed van het gekozen fysieke snaarprofiel op gewicht en swingweight.
+                    </div>
+                    <div id="strungConversionDisplay" class="conversion-text">
+                        Geschatte onbespannen specs: <strong>- g | - cm | - SW</strong>
+                    </div>
+                </div>
+
+                <div class="modal-card">
+                    <div class="card-title-row">
+                        <span class="card-title-text" data-i18n="modalStringChoice">Snaarkeuze & Spanning</span>
+                        <button id="infoStringBtn" class="info-toggle-btn">ℹ</button>
+                    </div>
+                    <div id="infoStringBox" class="info-collapsible" data-i18n="modalStringInfo">
+                        Vul hier het merk, type en de spankracht in (bijv. RPM Blast 1.25 op 24kg).
+                    </div>
+                    
+                    <div style="margin-bottom: 10px;">
+                        <label style="font-size: 9px; font-weight: 800; color: var(--brand-teal); text-transform: uppercase;" data-i18n="modalStringName">Merk & Type Snaar</label>
+                        <input type="text" id="modalStringNameInput" data-i18n-placeholder="modalStringNamePlaceholder" placeholder="Bijv. Babolat Synthetic Gut 1.30" class="dark-input" style="width:100%;">
+                    </div>
+
+                    <div class="string-input-grid">
+                        <div style="flex: 2;">
+                            <label data-i18n="modalProfileMain">Profiel (Lengte/Main)</label>
+                            <select id="modalSelectMain" class="dark-select"></select>
+                        </div>
+                        <div style="flex: 1; max-width:70px;">
+                            <label>Kg Main</label>
+                            <input type="number" id="modalTensionMain" placeholder="24" class="dark-input" step="0.5">
+                        </div>
+                    </div>
+                    <div class="string-input-grid" style="margin-top:8px;">
+                        <div style="flex: 2;">
+                            <label data-i18n="modalProfileCross">Profiel (Breedte/Cross)</label>
+                            <select id="modalSelectCross" class="dark-select"></select>
+                        </div>
+                        <div style="flex: 1; max-width:70px;">
+                            <label>Kg Cross</label>
+                            <input type="number" id="modalTensionCross" placeholder="23" class="dark-input" step="0.5">
+                        </div>
+                    </div>
+                </div>
+
+                <button id="btnSaveModalString" class="save-btn primary" style="width:100%; margin-top:6px; padding:14px; font-size:15px; text-transform:uppercase;" data-i18n="modalSaveString">Alle Wijzigingen Opslaan</button>
+
+                <div style="display:flex; gap:10px; margin-top:12px;">
+                    <button id="btnModalLoadToMeasure" class="cal-action-btn" style="flex:1;" data-i18n="modalReload">Herlaad in Meting</button>
+                    <button id="btnModalOpenInAI" class="save-btn" style="flex:1; font-size:12px; background:var(--brand-teal);" data-i18n="modalOpenAI">Open in AI Coach</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- MODAL VOOR LOSSE METINGEN BEWERKEN -->
+        <div id="editMeasurementsModal" class="modal-overlay" style="z-index: 60;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 style="margin:0; font-size:16px; color:var(--brand-teal);" data-i18n="editMeasurementsTitle">Losse Metingen Bewerken</h3>
+                    <button id="closeEditMeasurementsBtn" class="modal-close-btn">&times;</button>
+                </div>
+                
+                <div class="modal-card">
+                    <h4 style="margin-top:0; font-size:12px; color:var(--brand-green);" data-i18n="swMeasurementsTitle">Swingweight Metingen</h4>
+                    <div id="swMeasurementsEditList" style="display:flex; flex-direction:column; gap:8px;"></div>
+                    <button id="btnAddTempSW" class="cal-action-btn" style="margin-top:10px; width:100%;">+ SW Meting</button>
+                </div>
+
+                <div class="modal-card">
+                    <h4 style="margin-top:0; font-size:12px; color:var(--brand-green);" data-i18n="twMeasurementsTitle">Twistweight Metingen</h4>
+                    <div id="twMeasurementsEditList" style="display:flex; flex-direction:column; gap:8px;"></div>
+                    <button id="btnAddTempTW" class="cal-action-btn" style="margin-top:10px; width:100%;">+ TW Meting</button>
+                </div>
+
+                <button id="btnSaveEditedMeasurements" class="save-btn primary" style="width:100%; padding:14px; font-size:14px; text-transform:uppercase;" data-i18n="saveMeasurementsBtn">Metingen Opslaan</button>
+            </div>
+        </div>
+
+        <!-- Navigatiebalk Onderzijde -->
+        <nav id="bottom-nav">
+            <button class="nav-button active" data-page="measurePage">
+                <img src="icons/measure.svg" alt="Measure" />
+                <span>Measure</span>
+            </button>
+            <button class="nav-button" data-page="databasePage">
+                <img src="icons/settings.svg" alt="Database" />
+                <span>Database</span>
+            </button>
+            <button class="nav-button" data-page="aiPage">
+                <span style="font-size:18px; line-height:1; margin-bottom:2px;">🎾</span>
+                <span>AI Coach</span>
+            </button>
+            <button class="nav-button" data-page="calibratePage">
+                <img src="icons/calibrate.svg" alt="Calibrate" />
+                <span>Calibrate</span>
+            </button>
+            <button class="nav-button" data-page="settingsPage">
+                <img src="icons/guide.svg" alt="Settings" />
+                <span>Settings</span>
+            </button>
+        </nav>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
