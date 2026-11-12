@@ -4,9 +4,9 @@
 const MACHINE_AXIS_CM = 9.05;  // 90.5 mm buttcap tot rotatie-as
 const STANDARD_AXIS_CM = 10.0; // 100.0 mm industriestandaard
 
-const SETTLE_DURATION_SEC = 0.5; 
-const RECORD_DURATION_SEC = 3.5; 
-const WAIT_DURATION_SEC = 8.0;   
+const PREP_DURATION_SEC = 2.5;   // Tijd om machine een zetje te geven
+const RECORD_DURATION_SEC = 2.5; // Tijd van de meting zelf
+const WAIT_DURATION_SEC = 8.0;   // Cooldown na een meting
 
 let KAPPA = parseFloat(localStorage.getItem('cal_kappa')) || 1.471; 
 let I_0 = parseFloat(localStorage.getItem('cal_i0')) || 0.0050;   
@@ -82,7 +82,7 @@ const translations = {
         modalOpenAI: "Open in AI Coach",
         waitTilt: "Wacht op 45° kanteling",
         tapStart: "Tik om te starten.",
-        recording: "Oscillaties registreren...",
+        recording: "Meting loopt...",
         stopping: "Reset over",
         manualInputBtn: "Handmatige Invoer",
         alertNoData: "Voer eerst minimaal 1 meting uit voor dit racket.",
@@ -99,7 +99,9 @@ const translations = {
         editMeasurementsTitle: "Losse Metingen Bewerken",
         swMeasurementsTitle: "Swingweight Metingen",
         twMeasurementsTitle: "Twistweight Metingen",
-        saveMeasurementsBtn: "Metingen Opslaan & Herberekenen"
+        saveMeasurementsBtn: "Metingen Opslaan & Herberekenen",
+        prepText: "Geef een zetje! Start in",
+        errQuiet: "Meting mislukt (te stil of te kort)."
     },
     en: {
         headerUnit: "SW: 10cm Std | TW: Torsion",
@@ -182,7 +184,9 @@ const translations = {
         editMeasurementsTitle: "Edit Individual Measurements",
         swMeasurementsTitle: "Swingweight Measurements",
         twMeasurementsTitle: "Twistweight Measurements",
-        saveMeasurementsBtn: "Save Measurements & Recalculate"
+        saveMeasurementsBtn: "Save Measurements & Recalculate",
+        prepText: "Push now! Starts in",
+        errQuiet: "Failed (too still or short)."
     },
     de: {
         headerUnit: "SW: 10cm Std | TW: Torsion",
@@ -248,7 +252,7 @@ const translations = {
         modalOpenAI: "In KI Coach öffnen",
         waitTilt: "Warte auf 45° Neigung",
         tapStart: "Tippen zum Starten.",
-        recording: "Schwingungen werden aufgezeichnet...",
+        recording: "Schwingungen messen...",
         stopping: "Reset in",
         manualInputBtn: "Manuelle Eingabe",
         alertNoData: "Bitte führen Sie zuerst mindestens 1 Messung durch.",
@@ -265,7 +269,9 @@ const translations = {
         editMeasurementsTitle: "Einzelmessungen bearbeiten",
         swMeasurementsTitle: "Schwunggewicht Messungen",
         twMeasurementsTitle: "Twistweight Messungen",
-        saveMeasurementsBtn: "Messungen Speichern & Berechnen"
+        saveMeasurementsBtn: "Messungen Speichern & Berechnen",
+        prepText: "Anschieben! Start in",
+        errQuiet: "Fehlgeschlagen (zu ruhig/kurz)."
     }
 };
 
@@ -321,7 +327,7 @@ let swMeasurements = [];
 let twistMeasurements = [];
 
 let lastPeriodReadings = [];
-let lastSign = null;
+let currentPhase = 0; // 0 = start, 1 = positieve beweging, -1 = negatieve beweging
 let lastTime = null;
 let measurementTimeoutId;
 let countdownIntervalId;
@@ -475,7 +481,8 @@ function handleAccelerometerReading() {
         const pitchRad = Math.atan2(accelerometer.x, Math.sqrt(accelerometer.y ** 2 + accelerometer.z ** 2));
         const angle = Math.abs(pitchRad * (180 / Math.PI));
         const measurePage = document.getElementById('measurePage');
-        if (measurePage && measurePage.classList.contains('active') && !isMeasuring) {
+        
+        if (measurePage && measurePage.classList.contains('active') && !isMeasuring && mainActionBtn.dataset.state !== 'preparing') {
             if (angle >= 40 && angle <= 50 && !hasTiltedEnough && mainActionBtn.dataset.state === 'waiting_tilt') {
                 hasTiltedEnough = true;
                 updateUIState('ready_to_measure');
@@ -487,16 +494,31 @@ function handleAccelerometerReading() {
     }
 }
 
+// HYSTERESIS FILTER: Voorkomt fantoommetingen als telefoon stil ligt
+const NOISE_THRESHOLD = 0.3; // Snelheidsdrempel (rad/s). Lichte trillingen negeert hij nu.
+
 function processGyroData(omega, now) {
-    const sign = Math.sign(omega);
-    if (lastSign !== null && sign !== lastSign && Math.abs(omega) < 0.15) {
-        if (lastTime !== null) {
-            const period = ((now - lastTime) / 1000) * 2;
-            if (period >= 0.2 && period <= 2.0) lastPeriodReadings.push(period);
-        }
-        lastTime = now;
+    if (currentPhase === 0) {
+        if (omega > NOISE_THRESHOLD) currentPhase = 1;
+        else if (omega < -NOISE_THRESHOLD) currentPhase = -1;
+    } else if (currentPhase === 1 && omega < -NOISE_THRESHOLD) {
+        currentPhase = -1;
+        registerPeriod(now);
+    } else if (currentPhase === -1 && omega > NOISE_THRESHOLD) {
+        currentPhase = 1;
+        registerPeriod(now);
     }
-    lastSign = sign;
+}
+
+function registerPeriod(now) {
+    if (lastTime !== null) {
+        const period = ((now - lastTime) / 1000) * 2;
+        // Bredere marge: van heel snelle lege klem (0.2s) tot hele trage zware rackets (2.5s)
+        if (period >= 0.2 && period <= 2.5) {
+            lastPeriodReadings.push(period);
+        }
+    }
+    lastTime = now;
 }
 
 // --- Fysica Model (Swingweight & Twistweight) ---
@@ -596,6 +618,11 @@ function updateUIState(state) {
             mainActionBtn.classList.remove('disabled');
             if (statusMessage) statusMessage.innerText = t('tapStart');
             break;
+        case 'preparing': // NIEUWE STATE: Wachttijd voor het aanzwengelen
+            mainActionBtn.textContent = "Wacht...";
+            mainActionBtn.classList.add('disabled');
+            mainActionBtn.classList.remove('active-measure');
+            break;
         case 'recording':
             mainActionBtn.textContent = `${modeLabel}...`;
             mainActionBtn.classList.add('disabled');
@@ -613,33 +640,51 @@ function updateUIState(state) {
     }
 }
 
+// AANGEPASTE WORKFLOW: Eerst prep timer (countdown), dan pas meten
 function startMeasurementWorkflow() {
     if (mainActionBtn.dataset.state !== 'ready_to_measure') return;
 
-    lastPeriodReadings = [];
-    lastSign = null;
-    lastTime = null;
-    isMeasuring = true;
-
-    updateUIState('recording');
-    clearTimeout(measurementTimeoutId);
+    updateUIState('preparing');
+    let prepCountdown = Math.ceil(PREP_DURATION_SEC);
+    if (statusMessage) statusMessage.innerText = `${t('prepText')} ${prepCountdown}s...`;
+    
     clearInterval(countdownIntervalId);
+    clearTimeout(measurementTimeoutId);
+    
+    countdownIntervalId = setInterval(() => {
+        prepCountdown--;
+        if (prepCountdown > 0) {
+            if (statusMessage) statusMessage.innerText = `${t('prepText')} ${prepCountdown}s...`;
+        } else {
+            clearInterval(countdownIntervalId);
+            
+            // Start de échte meting
+            lastPeriodReadings = [];
+            currentPhase = 0;
+            lastTime = null;
+            isMeasuring = true;
+            
+            updateUIState('recording');
 
-    measurementTimeoutId = setTimeout(() => {
-        isMeasuring = false;
-        if (lastPeriodReadings.length < 2) {
-            if (statusMessage) statusMessage.innerText = "Error.";
-            updateUIState('waiting_tilt');
-            hasTiltedEnough = false;
-            return;
+            // Timeout voor de lengte van de meting
+            measurementTimeoutId = setTimeout(() => {
+                isMeasuring = false;
+                
+                if (lastPeriodReadings.length < 2) {
+                    if (statusMessage) statusMessage.innerText = t('errQuiet');
+                    updateUIState('waiting_tilt');
+                    hasTiltedEnough = false;
+                    return;
+                }
+
+                const avgPeriod = lastPeriodReadings.reduce((a, b) => a + b, 0) / lastPeriodReadings.length;
+                const val = calculateRacketMetrics(avgPeriod);
+                addMeasurementToGroup(val);
+                updateUIState('stopping');
+                startCountdown();
+            }, RECORD_DURATION_SEC * 1000);
         }
-
-        const avgPeriod = lastPeriodReadings.reduce((a, b) => a + b, 0) / lastPeriodReadings.length;
-        const val = calculateRacketMetrics(avgPeriod);
-        addMeasurementToGroup(val);
-        updateUIState('stopping');
-        startCountdown();
-    }, (SETTLE_DURATION_SEC + RECORD_DURATION_SEC) * 1000);
+    }, 1000);
 }
 
 function startCountdown() {
