@@ -4,14 +4,23 @@
 const MACHINE_AXIS_CM = 9.05;  // 90.5 mm buttcap tot rotatie-as
 const STANDARD_AXIS_CM = 10.0; // 100.0 mm industriestandaard
 
-const PREP_DURATION_SEC = 2.5;   // Tijd om machine een zetje te geven
-const RECORD_DURATION_SEC = 2.5; // Tijd van de meting zelf
-const WAIT_DURATION_SEC = 8.0;   // Cooldown na een meting
+const PREP_DURATION_SEC = 3.0;   // 3 seconden om de machine met de hand aan te zwengelen
+const RECORD_DURATION_SEC = 3.0; // 3 seconden zuivere oscillatie-opname
+const WAIT_DURATION_SEC = 4.0;   // Korte rusttijd na meting
+
+// Gyroscoop drempelwaarde (rad/s): negeert ruis bij stilstand volledig (voorkomt 147.6 bug)
+const PEAK_THRESHOLD = 0.25;
 
 let KAPPA = parseFloat(localStorage.getItem('cal_kappa')) || 1.471; 
 let I_0 = parseFloat(localStorage.getItem('cal_i0')) || 0.0050;   
 
-let tempT0 = null;
+// Kalibratiestaaf opgeslagen instellingen (standaard: 153g, 500mm lengte, 159.5mm offset)
+let savedRodMass = parseFloat(localStorage.getItem('cal_rod_mass')) || 153.0;
+let savedRodLengthMm = parseFloat(localStorage.getItem('cal_rod_length_mm')) || 500.0;
+let savedRodOffsetMm = parseFloat(localStorage.getItem('cal_rod_offset_mm')) || 159.5;
+
+// Kalibratie meetreeks (T1 van de kalibratiestaaf)
+let calReadingsT1 = [];
 let tempT1 = null;
 
 // --- Talen & Vertalingen ---
@@ -28,7 +37,7 @@ const translations = {
         balance: "Balans (cm)",
         badgeSW: "SWINGWEIGHT METING",
         badgeTW: "TWISTWEIGHT (TORSION)",
-        btnHold: "Hold at 45°",
+        btnStartMeasure: "Start Meting",
         saveNew: "Nieuw Racket Opslaan...",
         saveDb: "Opslaan in DB",
         historyTitleSW: "SWINGWEIGHT MEETREEKS",
@@ -51,17 +60,16 @@ const translations = {
         aiPlaceholder: "Typ je vraag (bijv. verander de snaar naar...)",
         aiInstruction: "Je bent de professionele AI Tuning Assistent van 'HappyRacket'. Spreek en antwoord ALTIJD in vloeiend Nederlands en gebruik de term 'HappyRacket' af en toe subtiel. Spreek de klant enthousiast en direct aan.",
         calTitle: "MACHINE KALIBRATIE",
-        calStep1: "STAP 1: LEGE KLEM METING",
-        calT0Label: "Periode Lege Klem (T₀)",
-        calT0Btn: "Meet T₀ (Leeg)",
-        calStep2: "STAP 2: KALIBRATIESTAAF",
+        calStep2: "KALIBRATIESTAAF INSTELLINGEN & METING",
+        rodLengthLabel: "Lengte (mm)",
+        rodOffsetLabel: "Offset (mm)",
         rodInfo: "Parameters kalibratiestaaf:",
-        rodMass: "<strong>Massa (g):</strong> Gewicht van de staaf op weegschaal.",
-        rodLength: "<strong>Lengte (cm):</strong> Totale lengte van de staaf.",
-        rodOffset: "<strong>Offset d (cm):</strong> Afstand van midden staaf tot de rotatie-as.",
-        calT1Label: "Periode Teststaaf (T₁)",
-        calT1Btn: "Meet T₁ (Met Staaf)",
-        calResults: "RESULTATEN",
+        rodMass: "<strong>Massa (g):</strong> Exacte gewicht van de staaf op een weegschaal.",
+        rodLength: "<strong>Lengte (mm):</strong> Totale lengte van de staaf (bijv. 500 mm).",
+        rodOffset: "<strong>Offset d (mm):</strong> Afstand van het midden van de staaf tot de rotatie-as (bij 500 mm staaf en 90.5 mm aanslag is dit 250 - 90.5 = 159.5 mm).",
+        calT1Label: "Gemeten Periode Kalibratiestaaf (T₁)",
+        calT1Btn: "Meet Kalibratiestaaf (via Telefoon)",
+        calResults: "KALIBRATIE RESULTATEN",
         calSave: "Kalibratie Opslaan",
         settingsTitle: "INSTELLINGEN",
         langLabel: "Taal / Language",
@@ -80,12 +88,11 @@ const translations = {
         modalSaveString: "Alle Wijzigingen Opslaan",
         modalReload: "Herlaad in Meting",
         modalOpenAI: "Open in AI Coach",
-        waitTilt: "Wacht op 45° kanteling",
-        tapStart: "Tik om te starten.",
-        recording: "Meting loopt...",
-        stopping: "Reset over",
+        tapStart: "Leg telefoon in houder en tik op Start.",
+        recording: "Slingeringen meten...",
+        stopping: "Klaar! Reset over",
         manualInputBtn: "Handmatige Invoer",
-        alertNoData: "Voer eerst minimaal 1 meting uit voor dit racket.",
+        alertNoData: "Voer eerst minimaal 1 meting uit.",
         alertSaved: "Succesvol opgeslagen!",
         confirmDel: "Weet je zeker dat je dit racket wilt verwijderen? Deze actie kan niet ongedaan worden gemaakt.",
         confirmNew: "Weet je zeker dat je een nieuwe meetreeks wilt starten? Huidige metingen gaan verloren.",
@@ -101,7 +108,7 @@ const translations = {
         twMeasurementsTitle: "Twistweight Metingen",
         saveMeasurementsBtn: "Metingen Opslaan & Herberekenen",
         prepText: "Geef een zetje! Start in",
-        errQuiet: "Meting mislukt (te stil of te kort)."
+        errQuiet: "Geen beweging gedetecteerd (machine stond stil)."
     },
     en: {
         headerUnit: "SW: 10cm Std | TW: Torsion",
@@ -113,7 +120,7 @@ const translations = {
         balance: "Balance (cm)",
         badgeSW: "SWINGWEIGHT MEASUREMENT",
         badgeTW: "TWISTWEIGHT (TORSION)",
-        btnHold: "Hold at 45°",
+        btnStartMeasure: "Start Measurement",
         saveNew: "Save New Racket...",
         saveDb: "Save to DB",
         historyTitleSW: "SWINGWEIGHT HISTORY",
@@ -136,17 +143,16 @@ const translations = {
         aiPlaceholder: "Type your question (e.g., change string to...)",
         aiInstruction: "You are the professional AI Tuning Assistant for 'HappyRacket'. ALWAYS speak and answer in fluent English. Use English tennis terminology. Address the customer directly and enthusiastically.",
         calTitle: "MACHINE CALIBRATION",
-        calStep1: "STEP 1: EMPTY CLAMP MEASUREMENT",
-        calT0Label: "Period Empty Clamp (T₀)",
-        calT0Btn: "Measure T₀ (Empty)",
-        calStep2: "STEP 2: CALIBRATION ROD",
+        calStep2: "CALIBRATION ROD SETTINGS & MEASUREMENT",
+        rodLengthLabel: "Length (mm)",
+        rodOffsetLabel: "Offset (mm)",
         rodInfo: "Calibration rod parameters:",
-        rodMass: "<strong>Mass (g):</strong> Weight of the rod on scale.",
-        rodLength: "<strong>Length (cm):</strong> Total length of the rod.",
-        rodOffset: "<strong>Offset d (cm):</strong> Distance from center of rod to rotation axis.",
-        calT1Label: "Period Test Rod (T₁)",
-        calT1Btn: "Measure T₁ (With Rod)",
-        calResults: "RESULTS",
+        rodMass: "<strong>Mass (g):</strong> Exact weight of the rod on a scale.",
+        rodLength: "<strong>Length (mm):</strong> Total length of the rod (e.g., 500 mm).",
+        rodOffset: "<strong>Offset d (mm):</strong> Distance from rod center to pivot axis (for 500 mm rod and 90.5 mm buttcap stop: 250 - 90.5 = 159.5 mm).",
+        calT1Label: "Measured Period Calibration Rod (T₁)",
+        calT1Btn: "Measure Calibration Rod (with Phone)",
+        calResults: "CALIBRATION RESULTS",
         calSave: "Save Calibration",
         settingsTitle: "SETTINGS",
         langLabel: "Taal / Language",
@@ -165,12 +171,11 @@ const translations = {
         modalSaveString: "Save All Changes",
         modalReload: "Reload in Measurement",
         modalOpenAI: "Open in AI Coach",
-        waitTilt: "Waiting for 45° tilt",
-        tapStart: "Tap to start.",
+        tapStart: "Place phone in cradle and tap Start.",
         recording: "Recording oscillations...",
-        stopping: "Reset in",
+        stopping: "Done! Reset in",
         manualInputBtn: "Manual Input",
-        alertNoData: "Please perform at least 1 measurement for this racket first.",
+        alertNoData: "Please perform at least 1 measurement first.",
         alertSaved: "Successfully saved!",
         confirmDel: "Are you sure you want to delete this racket? This action cannot be undone.",
         confirmNew: "Are you sure you want to start a new measurement series? Current unsaved measurements will be lost.",
@@ -185,8 +190,8 @@ const translations = {
         swMeasurementsTitle: "Swingweight Measurements",
         twMeasurementsTitle: "Twistweight Measurements",
         saveMeasurementsBtn: "Save Measurements & Recalculate",
-        prepText: "Push now! Starts in",
-        errQuiet: "Failed (too still or short)."
+        prepText: "Push cradle! Starts in",
+        errQuiet: "No motion detected (cradle was still)."
     },
     de: {
         headerUnit: "SW: 10cm Std | TW: Torsion",
@@ -198,7 +203,7 @@ const translations = {
         balance: "Balance (cm)",
         badgeSW: "SCHWUNGGEWICHT MESSUNG",
         badgeTW: "TWISTWEIGHT (TORSION)",
-        btnHold: "Auf 45° halten",
+        btnStartMeasure: "Messung Starten",
         saveNew: "Neuen Schläger speichern...",
         saveDb: "In DB speichern",
         historyTitleSW: "SCHWUNGGEWICHT VERLAUF",
@@ -221,17 +226,16 @@ const translations = {
         aiPlaceholder: "Stell deine Frage (z.B. Saite ändern in...)",
         aiInstruction: "Du bist der professionelle KI-Tuning-Assistent von 'HappyRacket'. Sprich und antworte IMMER auf fließendem Deutsch. Verwende deutsche Tennis-Fachbegriffe. Sprich den Kunden begeistert und direkt an.",
         calTitle: "MASCHINENKALIBRIERUNG",
-        calStep1: "SCHRITT 1: LEERE KLEMME MESSUNG",
-        calT0Label: "Periode Leere Klemme (T₀)",
-        calT0Btn: "Messe T₀ (Leer)",
-        calStep2: "SCHRITT 2: KALIBRIERUNGSSTAB",
+        calStep2: "KALIBRIERSTAB EINSTELLUNGEN & MESSUNG",
+        rodLengthLabel: "Länge (mm)",
+        rodOffsetLabel: "Offset (mm)",
         rodInfo: "Parameter des Kalibrierungsstabs:",
-        rodMass: "<strong>Masse (g):</strong> Gewicht des Stabs auf Waage.",
-        rodLength: "<strong>Länge (cm):</strong> Gesamtlänge des Stabs.",
-        rodOffset: "<strong>Offset d (cm):</strong> Abstand von Mitte des Stabs zur Rotationsachse.",
-        calT1Label: "Periode Teststab (T₁)",
-        calT1Btn: "Messe T₁ (Mit Stab)",
-        calResults: "ERGEBNISSE",
+        rodMass: "<strong>Masse (g):</strong> Exaktes Gewicht des Stabs auf der Waage.",
+        rodLength: "<strong>Länge (mm):</strong> Gesamtlänge des Stabs (z.B. 500 mm).",
+        rodOffset: "<strong>Offset d (mm):</strong> Abstand von Stabmitte zur Rotationsachse (bei 500 mm Stab und 90.5 mm Anschlag: 250 - 90.5 = 159.5 mm).",
+        calT1Label: "Gemessene Periode Kalibrierstab (T₁)",
+        calT1Btn: "Messe Kalibrierstab (mit Handy)",
+        calResults: "KALIBRIERUNGSERGEBNISSE",
         calSave: "Kalibrierung Speichern",
         settingsTitle: "EINSTELLUNGEN",
         langLabel: "Taal / Language",
@@ -250,10 +254,9 @@ const translations = {
         modalSaveString: "Alle Änderungen Speichern",
         modalReload: "In Messung neu laden",
         modalOpenAI: "In KI Coach öffnen",
-        waitTilt: "Warte auf 45° Neigung",
-        tapStart: "Tippen zum Starten.",
+        tapStart: "Handy einlegen und Start tippen.",
         recording: "Schwingungen messen...",
-        stopping: "Reset in",
+        stopping: "Fertig! Reset in",
         manualInputBtn: "Manuelle Eingabe",
         alertNoData: "Bitte führen Sie zuerst mindestens 1 Messung durch.",
         alertSaved: "Erfolgreich gespeichert!",
@@ -271,46 +274,11 @@ const translations = {
         twMeasurementsTitle: "Twistweight Messungen",
         saveMeasurementsBtn: "Messungen Speichern & Berechnen",
         prepText: "Anschieben! Start in",
-        errQuiet: "Fehlgeschlagen (zu ruhig/kurz)."
+        errQuiet: "Keine Bewegung erkannt (Maschine stand still)."
     }
 };
 
 const t = (key) => translations[currentLang][key] || key;
-
-function applyLanguage(lang) {
-    currentLang = lang;
-    localStorage.setItem('app_lang', lang);
-    
-    document.querySelectorAll('[data-i18n]').forEach(el => {
-        const key = el.getAttribute('data-i18n');
-        if (translations[lang][key]) {
-            el.innerHTML = translations[lang][key]; 
-        }
-    });
-    
-    document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
-        const key = el.getAttribute('data-i18n-placeholder');
-        if (translations[lang][key]) {
-            el.placeholder = translations[lang][key];
-        }
-    });
-
-    if (activeModeBadge) activeModeBadge.innerText = currentMode === 'sw' ? t('badgeSW') : t('badgeTW');
-    if (historySectionTitle) historySectionTitle.innerText = currentMode === 'sw' ? t('historyTitleSW') : t('historyTitleTW');
-    
-    if (aiSelectRacket && aiSelectRacket.options.length > 0) {
-        aiSelectRacket.options[0].text = t('dbEmptyOption');
-    }
-    
-    if(btnToggleStrungState) {
-        btnToggleStrungState.innerText = isStrungMeasured ? t('modalStrung') : t('modalUnstrung');
-    }
-
-    if(mainActionBtn && mainActionBtn.dataset.state === 'waiting_tilt') {
-        const modeLabel = currentMode === 'sw' ? 'SW' : 'TWIST';
-        statusMessage.innerText = `${t('waitTilt')} (${modeLabel})...`;
-    }
-}
 
 // --- Vaste Snaarprofielen Database ---
 const STRING_PROFILES = [
@@ -326,13 +294,17 @@ let currentMode = 'sw';
 let swMeasurements = [];
 let twistMeasurements = [];
 
+// Gyroscoop Signaalverwerking State
 let lastPeriodReadings = [];
-let currentPhase = 0; // 0 = start, 1 = positieve beweging, -1 = negatieve beweging
-let lastTime = null;
+let armedDirection = 0; // 0 = wacht op piek, 1 = positieve piek gehaald, -1 = negatieve piek gehaald
+let prevOmega = null;
+let prevSampleTime = null;
+let lastZeroCrossTime = null;
+let lastCrossDirection = 0;
+
 let measurementTimeoutId;
 let countdownIntervalId;
 let isMeasuring = false;
-let hasTiltedEnough = false;
 let currentCountdown = 0;
 
 let currentCalculatedSW = 0;
@@ -349,7 +321,7 @@ let isStrungMeasured = true;
 let tempEditSW = [];
 let tempEditTW = [];
 
-// --- Gemini AI API Key & Setup (Lokaal geladen) ---
+// --- Gemini AI API Key & Setup ---
 let geminiApiKey = localStorage.getItem('gemini_user_api_key') || '';
 let aiChatHistory = [];
 
@@ -440,85 +412,166 @@ const btnAddTempTW = document.getElementById('btnAddTempTW');
 const btnSaveEditedMeasurements = document.getElementById('btnSaveEditedMeasurements');
 
 // Calibration DOM
-const calT0Display = document.getElementById('calT0Display');
 const calT1Display = document.getElementById('calT1Display');
-const btnCalibrateT0 = document.getElementById('btnCalibrateT0');
+const calCountBadge = document.getElementById('calCountBadge');
+const calRodInertiaInfo = document.getElementById('calRodInertiaInfo');
 const btnCalibrateT1 = document.getElementById('btnCalibrateT1');
+const btnResetCalMeasurements = document.getElementById('btnResetCalMeasurements');
 const btnSaveCalibration = document.getElementById('btnSaveCalibration');
 const calResultKappa = document.getElementById('calResultKappa');
-const calResultI0 = document.getElementById('calResultI0');
+const calInputI0 = document.getElementById('calInputI0');
+const calStatusHint = document.getElementById('calStatusHint');
 const calRodMass = document.getElementById('calRodMass');
 const calRodLength = document.getElementById('calRodLength');
 const calRodOffset = document.getElementById('calRodOffset');
 const infoToggleBtn = document.getElementById('infoToggleBtn');
 const rodInfoBox = document.getElementById('rodInfoBox');
 
-// Sensors
+function applyLanguage(lang) {
+    currentLang = lang;
+    localStorage.setItem('app_lang', lang);
+    
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.getAttribute('data-i18n');
+        if (translations[lang][key]) {
+            el.innerHTML = translations[lang][key]; 
+        }
+    });
+    
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+        const key = el.getAttribute('data-i18n-placeholder');
+        if (translations[lang][key]) {
+            el.placeholder = translations[lang][key];
+        }
+    });
+
+    if (activeModeBadge) activeModeBadge.innerText = currentMode === 'sw' ? t('badgeSW') : t('badgeTW');
+    if (historySectionTitle) historySectionTitle.innerText = currentMode === 'sw' ? t('historyTitleSW') : t('historyTitleTW');
+    
+    if (aiSelectRacket && aiSelectRacket.options.length > 0) {
+        aiSelectRacket.options[0].text = t('dbEmptyOption');
+    }
+    
+    if (btnToggleStrungState) {
+        btnToggleStrungState.innerText = isStrungMeasured ? t('modalStrung') : t('modalUnstrung');
+    }
+
+    if (mainActionBtn && mainActionBtn.dataset.state === 'ready_to_measure') {
+        const modeLabel = currentMode === 'sw' ? 'SW' : 'TWIST';
+        mainActionBtn.textContent = `Start ${modeLabel}`;
+        if (statusMessage) statusMessage.innerText = t('tapStart');
+    }
+}
+
+// --- Gyroscoop & Bewegingssensoren ---
 let gyroscope = null;
-let accelerometer = null;
+let sensorAvailable = false;
+
+function resetGyroTracking() {
+    lastPeriodReadings = [];
+    armedDirection = 0;
+    prevOmega = null;
+    prevSampleTime = null;
+    lastZeroCrossTime = null;
+    lastCrossDirection = 0;
+}
 
 async function startSensors() {
-    try {
-        gyroscope = new Gyroscope({ frequency: 60 });
-        gyroscope.addEventListener('reading', () => {
-            if (gyroscope.y !== null && isMeasuring) processGyroData(gyroscope.y, performance.now());
+    // 1. Moderne Gyroscope API (Android Chrome)
+    if ('Gyroscope' in window) {
+        try {
+            gyroscope = new Gyroscope({ frequency: 60 });
+            gyroscope.addEventListener('reading', () => {
+                if (!isMeasuring) return;
+                const y = gyroscope.y || 0;
+                const z = gyroscope.z || 0;
+                const dominantSign = Math.abs(y) >= Math.abs(z) ? Math.sign(y) : Math.sign(z);
+                const combinedOmega = dominantSign * Math.hypot(y, z);
+                processGyroData(combinedOmega, performance.now());
+            });
+            await gyroscope.start();
+            sensorAvailable = true;
+            updateUIState('ready_to_measure');
+            return;
+        } catch (error) {
+            console.warn("Gyroscope API viel terug op DeviceMotion:", error);
+        }
+    }
+
+    // 2. Fallback: DeviceMotionEvent (iOS Safari & bredere mobiele browsers)
+    if ('DeviceMotionEvent' in window) {
+        window.addEventListener('devicemotion', (event) => {
+            if (!isMeasuring || !event.rotationRate) return;
+            const degToRad = Math.PI / 180;
+            const y = (event.rotationRate.beta || 0) * degToRad;
+            const z = (event.rotationRate.gamma || 0) * degToRad;
+            const dominantSign = Math.abs(y) >= Math.abs(z) ? Math.sign(y) : Math.sign(z);
+            const combinedOmega = dominantSign * Math.hypot(y, z);
+            processGyroData(combinedOmega, performance.now());
         });
-        await gyroscope.start();
-
-        accelerometer = new Accelerometer({ frequency: 60 });
-        accelerometer.addEventListener('reading', handleAccelerometerReading);
-        await accelerometer.start();
-
-        updateUIState('waiting_tilt');
-    } catch (error) {
-        if (statusMessage) statusMessage.innerText = "Sensor offline. " + t('manualInputBtn');
-        updateUIState('error');
+        sensorAvailable = true;
+        updateUIState('ready_to_measure');
+        return;
     }
+
+    // 3. Geen sensor aanwezig
+    sensorAvailable = false;
+    if (statusMessage) statusMessage.innerText = "Sensor offline. " + t('manualInputBtn');
+    updateUIState('error');
 }
 
-function handleAccelerometerReading() {
-    if (accelerometer.x !== null && accelerometer.y !== null && accelerometer.z !== null) {
-        const pitchRad = Math.atan2(accelerometer.x, Math.sqrt(accelerometer.y ** 2 + accelerometer.z ** 2));
-        const angle = Math.abs(pitchRad * (180 / Math.PI));
-        const measurePage = document.getElementById('measurePage');
-        
-        if (measurePage && measurePage.classList.contains('active') && !isMeasuring && mainActionBtn.dataset.state !== 'preparing') {
-            if (angle >= 40 && angle <= 50 && !hasTiltedEnough && mainActionBtn.dataset.state === 'waiting_tilt') {
-                hasTiltedEnough = true;
-                updateUIState('ready_to_measure');
-            } else if ((angle < 30 || angle > 60) && hasTiltedEnough && mainActionBtn.dataset.state === 'ready_to_measure') {
-                hasTiltedEnough = false;
-                updateUIState('waiting_tilt');
-            }
-        }
-    }
-}
-
-// HYSTERESIS FILTER: Voorkomt fantoommetingen als telefoon stil ligt
-const NOISE_THRESHOLD = 0.3; // Snelheidsdrempel (rad/s). Lichte trillingen negeert hij nu.
-
+// NULDOORgang-DETECTIE MET HYSTERESIS EN INTERPOLATIE
 function processGyroData(omega, now) {
-    if (currentPhase === 0) {
-        if (omega > NOISE_THRESHOLD) currentPhase = 1;
-        else if (omega < -NOISE_THRESHOLD) currentPhase = -1;
-    } else if (currentPhase === 1 && omega < -NOISE_THRESHOLD) {
-        currentPhase = -1;
-        registerPeriod(now);
-    } else if (currentPhase === -1 && omega > NOISE_THRESHOLD) {
-        currentPhase = 1;
-        registerPeriod(now);
+    if (omega > PEAK_THRESHOLD) {
+        armedDirection = 1;
+    } else if (omega < -PEAK_THRESHOLD) {
+        armedDirection = -1;
     }
-}
 
-function registerPeriod(now) {
-    if (lastTime !== null) {
-        const period = ((now - lastTime) / 1000) * 2;
-        // Bredere marge: van heel snelle lege klem (0.2s) tot hele trage zware rackets (2.5s)
-        if (period >= 0.2 && period <= 2.5) {
-            lastPeriodReadings.push(period);
+    if (prevOmega !== null && prevSampleTime !== null) {
+        // Neergaande nuldoorgang
+        if (armedDirection === 1 && prevOmega > 0 && omega <= 0) {
+            const fraction = prevOmega / (prevOmega - omega);
+            const exactCrossTime = prevSampleTime + fraction * (now - prevSampleTime);
+            recordZeroCrossing(exactCrossTime, -1);
+            armedDirection = 0;
+        }
+        // Opgaande nuldoorgang
+        else if (armedDirection === -1 && prevOmega < 0 && omega >= 0) {
+            const fraction = Math.abs(prevOmega) / (Math.abs(prevOmega) + omega);
+            const exactCrossTime = prevSampleTime + fraction * (now - prevSampleTime);
+            recordZeroCrossing(exactCrossTime, 1);
+            armedDirection = 0;
         }
     }
-    lastTime = now;
+
+    prevOmega = omega;
+    prevSampleTime = now;
+}
+
+function recordZeroCrossing(crossTime, direction) {
+    if (lastZeroCrossTime !== null && lastCrossDirection !== direction) {
+        const halfPeriodSec = (crossTime - lastZeroCrossTime) / 1000.0;
+        const fullPeriodSec = halfPeriodSec * 2.0;
+
+        if (fullPeriodSec >= 0.20 && fullPeriodSec <= 2.50) {
+            lastPeriodReadings.push(fullPeriodSec);
+        }
+    }
+    lastZeroCrossTime = crossTime;
+    lastCrossDirection = direction;
+}
+
+function computeCleanMeanPeriod(readings) {
+    if (!readings || readings.length === 0) return null;
+    if (readings.length <= 2) {
+        return readings.reduce((a, b) => a + b, 0) / readings.length;
+    }
+    const sorted = [...readings].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    const filtered = sorted.filter(p => Math.abs(p - median) / median < 0.12);
+    const listToUse = filtered.length > 0 ? filtered : sorted;
+    return listToUse.reduce((a, b) => a + b, 0) / listToUse.length;
 }
 
 // --- Fysica Model (Swingweight & Twistweight) ---
@@ -535,6 +588,10 @@ function calculateRacketMetrics(period) {
         currentCalculatedTwist = iMach * 10000;
         valOverviewTW.innerText = currentCalculatedTwist.toFixed(1);
         return currentCalculatedTwist;
+    }
+
+    if (iMach <= 0.0001) {
+        return null;
     }
 
     const distCmToMach = Math.abs(bp_m - d_mach_m);
@@ -598,7 +655,9 @@ function promptManualInput() {
     const input = prompt(`${t('manualPrompt')} ${modeName}\n${t('manualPromptDesc')} (${hint}):`, defaultVal);
     if (input && !isNaN(parseFloat(input)) && parseFloat(input) > 0) {
         const calculatedVal = calculateRacketMetrics(parseFloat(input));
-        addMeasurementToGroup(calculatedVal);
+        if (calculatedVal !== null) {
+            addMeasurementToGroup(calculatedVal);
+        }
     }
 }
 
@@ -607,24 +666,19 @@ function updateUIState(state) {
     mainActionBtn.dataset.state = state;
     const modeLabel = currentMode === 'sw' ? 'SW' : 'TWIST';
     switch (state) {
-        case 'waiting_tilt':
-            mainActionBtn.textContent = t('btnHold');
-            mainActionBtn.classList.remove('active-measure', 'disabled');
-            if (statusMessage) statusMessage.innerText = `${t('waitTilt')} (${modeLabel})...`;
-            break;
         case 'ready_to_measure':
             mainActionBtn.textContent = `Start ${modeLabel}`;
             mainActionBtn.classList.add('active-measure');
             mainActionBtn.classList.remove('disabled');
             if (statusMessage) statusMessage.innerText = t('tapStart');
             break;
-        case 'preparing': // NIEUWE STATE: Wachttijd voor het aanzwengelen
-            mainActionBtn.textContent = "Wacht...";
+        case 'preparing':
+            mainActionBtn.textContent = "Geef zetje...";
             mainActionBtn.classList.add('disabled');
             mainActionBtn.classList.remove('active-measure');
             break;
         case 'recording':
-            mainActionBtn.textContent = `${modeLabel}...`;
+            mainActionBtn.textContent = `${modeLabel} meten...`;
             mainActionBtn.classList.add('disabled');
             if (statusMessage) statusMessage.innerText = t('recording');
             break;
@@ -640,9 +694,13 @@ function updateUIState(state) {
     }
 }
 
-// AANGEPASTE WORKFLOW: Eerst prep timer (countdown), dan pas meten
+// --- HOOFDMETING WORKFLOW MET 3 SECONDEN AANZWENGELTIJD ---
 function startMeasurementWorkflow() {
-    if (mainActionBtn.dataset.state !== 'ready_to_measure') return;
+    if (isMeasuring || mainActionBtn.dataset.state === 'preparing') return;
+
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        DeviceMotionEvent.requestPermission().catch(() => {});
+    }
 
     updateUIState('preparing');
     let prepCountdown = Math.ceil(PREP_DURATION_SEC);
@@ -658,27 +716,30 @@ function startMeasurementWorkflow() {
         } else {
             clearInterval(countdownIntervalId);
             
-            // Start de échte meting
-            lastPeriodReadings = [];
-            currentPhase = 0;
-            lastTime = null;
+            resetGyroTracking();
             isMeasuring = true;
-            
             updateUIState('recording');
 
-            // Timeout voor de lengte van de meting
             measurementTimeoutId = setTimeout(() => {
                 isMeasuring = false;
                 
-                if (lastPeriodReadings.length < 2) {
+                const avgPeriod = computeCleanMeanPeriod(lastPeriodReadings);
+                if (!avgPeriod || lastPeriodReadings.length < 2) {
                     if (statusMessage) statusMessage.innerText = t('errQuiet');
-                    updateUIState('waiting_tilt');
-                    hasTiltedEnough = false;
+                    mainActionBtn.textContent = `Start ${currentMode === 'sw' ? 'SW' : 'TWIST'}`;
+                    mainActionBtn.dataset.state = 'ready_to_measure';
+                    mainActionBtn.classList.add('active-measure');
+                    mainActionBtn.classList.remove('disabled');
                     return;
                 }
 
-                const avgPeriod = lastPeriodReadings.reduce((a, b) => a + b, 0) / lastPeriodReadings.length;
                 const val = calculateRacketMetrics(avgPeriod);
+                if (val === null) {
+                    if (statusMessage) statusMessage.innerText = t('errQuiet');
+                    updateUIState('ready_to_measure');
+                    return;
+                }
+
                 addMeasurementToGroup(val);
                 updateUIState('stopping');
                 startCountdown();
@@ -694,8 +755,7 @@ function startCountdown() {
         currentCountdown--;
         if (currentCountdown <= 0) {
             clearInterval(countdownIntervalId);
-            updateUIState('waiting_tilt');
-            hasTiltedEnough = false;
+            updateUIState('ready_to_measure');
         } else {
             if (statusMessage) statusMessage.innerText = `${t('stopping')} ${currentCountdown}s...`;
         }
@@ -755,6 +815,110 @@ function displayMeasurementsInList(currentMean) {
         `;
         measurementList.appendChild(item);
     });
+}
+
+// --- 1-STAPS KALIBRATIE MET KALIBRATIESTAAF VIA TELEFOON ---
+function startSingleRodCalibration(btnElement) {
+    if (isMeasuring) return;
+
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        DeviceMotionEvent.requestPermission().catch(() => {});
+    }
+
+    const originalText = t('calT1Btn');
+    let prep = Math.ceil(PREP_DURATION_SEC);
+    btnElement.disabled = true;
+    btnElement.style.backgroundColor = "var(--brand-green)";
+    btnElement.style.color = "var(--brand-navy-dark)";
+    btnElement.innerText = `${t('prepText')} ${prep}s...`;
+
+    const prepInterval = setInterval(() => {
+        prep--;
+        if (prep > 0) {
+            btnElement.innerText = `${t('prepText')} ${prep}s...`;
+        } else {
+            clearInterval(prepInterval);
+            btnElement.style.backgroundColor = "var(--brand-navy-dark)";
+            btnElement.style.color = "#fff";
+            btnElement.innerText = `${t('recording')} (${RECORD_DURATION_SEC}s)`;
+
+            resetGyroTracking();
+            isMeasuring = true;
+
+            setTimeout(() => {
+                isMeasuring = false;
+                btnElement.disabled = false;
+
+                const avgPeriod = computeCleanMeanPeriod(lastPeriodReadings);
+                if (!avgPeriod || lastPeriodReadings.length < 2) {
+                    btnElement.innerText = t('errQuiet');
+                    btnElement.style.backgroundColor = "var(--red-outlier)";
+                    setTimeout(() => {
+                        btnElement.innerText = originalText;
+                        btnElement.style.backgroundColor = "var(--brand-teal)";
+                        btnElement.style.color = "#fff";
+                    }, 2500);
+                    return;
+                }
+
+                calReadingsT1.push(avgPeriod);
+                tempT1 = calReadingsT1.reduce((a, b) => a + b, 0) / calReadingsT1.length;
+
+                if (calT1Display) calT1Display.innerText = `${tempT1.toFixed(4)} s`;
+                if (calCountBadge) calCountBadge.innerText = `${calReadingsT1.length}x gemeten`;
+
+                btnElement.innerText = originalText;
+                btnElement.style.backgroundColor = "var(--brand-teal)";
+                btnElement.style.color = "#fff";
+
+                processCalibrationCalculations();
+            }, RECORD_DURATION_SEC * 1000);
+        }
+    }, 1000);
+}
+
+function processCalibrationCalculations() {
+    const massG = parseFloat(calRodMass ? calRodMass.value : savedRodMass) || 153.0;
+    const rawLength = parseFloat(calRodLength ? calRodLength.value : savedRodLengthMm) || 500.0;
+    const rawOffset = parseFloat(calRodOffset ? calRodOffset.value : savedRodOffsetMm) || 159.5;
+    const customI0 = parseFloat(calInputI0 ? calInputI0.value : I_0);
+    const activeI0 = !isNaN(customI0) && customI0 >= 0 ? customI0 : I_0;
+
+    // Slimme eenheid-omrekening: ondersteunt mm (bijv. 500 en 159.5) én cm (bijv. 50 en 15.95)
+    const L_m = rawLength > 100 ? rawLength / 1000.0 : rawLength / 100.0;
+    const d_m = (rawLength > 100 || rawOffset > 40) ? rawOffset / 1000.0 : rawOffset / 100.0;
+    const m_kg = massG / 1000.0;
+
+    // Traagheidsmoment van de kalibratiestaaf rond de rotatie-as: I_rod = (1/12)*m*L^2 + m*d^2
+    const iRod = (1.0 / 12.0) * m_kg * (L_m ** 2) + m_kg * (d_m ** 2);
+    const iRodSwUnits = iRod * 10000;
+
+    if (calRodInertiaInfo) {
+        calRodInertiaInfo.innerText = `Traagheid staaf om rotatie-as (I_staaf): ${iRodSwUnits.toFixed(1)} kg·cm²`;
+    }
+
+    if (!tempT1 || tempT1 <= 0) {
+        return null;
+    }
+
+    const factor1 = (tempT1 / (2 * Math.PI)) ** 2;
+    const calculatedKappa = (iRod + activeI0) / factor1;
+
+    if (calculatedKappa > 0) {
+        if (calResultKappa) calResultKappa.innerText = `${calculatedKappa.toFixed(4)} Nm/rad`;
+        if (calStatusHint) {
+            calStatusHint.innerText = `✅ Berekend op basis van T₁ = ${tempT1.toFixed(4)}s (${calReadingsT1.length} meting${calReadingsT1.length > 1 ? 'en' : ''}). Klik op Opslaan om te activeren.`;
+        }
+        return {
+            kappa: calculatedKappa,
+            i0: activeI0,
+            rodMass: massG,
+            rodLength: rawLength,
+            rodOffset: rawOffset
+        };
+    }
+
+    return null;
 }
 
 // --- Database & Racket Opslag ---
@@ -1179,9 +1343,14 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // Laad opgeslagen kalibratie- & staafwaarden
+    if (calRodMass) calRodMass.value = savedRodMass;
+    if (calRodLength) calRodLength.value = savedRodLengthMm;
+    if (calRodOffset) calRodOffset.value = savedRodOffsetMm;
     if (calResultKappa) calResultKappa.innerText = `${KAPPA.toFixed(4)} Nm/rad`;
-    if (calResultI0) calResultI0.innerText = `${I_0.toFixed(5)} kg·m²`;
+    if (calInputI0) calInputI0.value = I_0.toFixed(5);
 
+    processCalibrationCalculations();
     populateStringDropdowns();
     renderDatabase();
     startSensors();
@@ -1200,10 +1369,10 @@ document.addEventListener('DOMContentLoaded', () => {
         modeTwistBtn.classList.remove('active');
         cardSW.classList.add('active');
         cardTW.classList.remove('active');
-        if(activeModeBadge) activeModeBadge.innerText = t('badgeSW');
-        if(historySectionTitle) historySectionTitle.innerText = t('historyTitleSW');
+        if (activeModeBadge) activeModeBadge.innerText = t('badgeSW');
+        if (historySectionTitle) historySectionTitle.innerText = t('historyTitleSW');
         updateMeasurementGroupDisplay();
-        updateUIState('waiting_tilt');
+        updateUIState(sensorAvailable ? 'ready_to_measure' : 'error');
     });
 
     modeTwistBtn.addEventListener('click', () => {
@@ -1212,10 +1381,10 @@ document.addEventListener('DOMContentLoaded', () => {
         modeSWBtn.classList.remove('active');
         cardTW.classList.add('active');
         cardSW.classList.remove('active');
-        if(activeModeBadge) activeModeBadge.innerText = t('badgeTW');
-        if(historySectionTitle) historySectionTitle.innerText = t('historyTitleTW');
+        if (activeModeBadge) activeModeBadge.innerText = t('badgeTW');
+        if (historySectionTitle) historySectionTitle.innerText = t('historyTitleTW');
         updateMeasurementGroupDisplay();
-        updateUIState('waiting_tilt');
+        updateUIState(sensorAvailable ? 'ready_to_measure' : 'error');
     });
 
     btnStartAICoach.addEventListener('click', () => {
@@ -1295,20 +1464,18 @@ document.addEventListener('DOMContentLoaded', () => {
     cardSW.style.cursor = 'pointer';
     cardSW.addEventListener('click', () => {
         if (currentMode !== 'sw') modeSWBtn.click();
-        promptManualInput();
     });
 
     cardTW.style.cursor = 'pointer';
     cardTW.addEventListener('click', () => {
         if (currentMode !== 'twist') modeTwistBtn.click();
-        promptManualInput();
     });
 
     if (mainActionBtn) {
         mainActionBtn.addEventListener('click', () => {
-            if (mainActionBtn.dataset.state === 'ready_to_measure') {
+            if (sensorAvailable) {
                 startMeasurementWorkflow();
-            } else if (mainActionBtn.dataset.state === 'error' || mainActionBtn.dataset.state === 'waiting_tilt') {
+            } else {
                 promptManualInput();
             }
         });
@@ -1329,8 +1496,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 valOverviewTW.innerText = '-';
             }
             updateMeasurementGroupDisplay();
-            updateUIState('waiting_tilt');
-            hasTiltedEnough = false;
+            updateUIState(sensorAvailable ? 'ready_to_measure' : 'error');
         });
     }
 
@@ -1496,30 +1662,46 @@ document.addEventListener('DOMContentLoaded', () => {
         aiTargetTW.value = r.twist || '';
     });
 
-    if (btnCalibrateT0) {
-        btnCalibrateT0.addEventListener('click', () => {
-            const t0 = prompt("T₀ sec:", "0.366");
-            if (t0 && !isNaN(parseFloat(t0))) {
-                tempT0 = parseFloat(t0);
-                calT0Display.innerText = `${tempT0.toFixed(3)} s`;
-                processCalibrationCalculations();
-            }
+    // --- 1-Staps Kalibratie Events ---
+    if (btnCalibrateT1) {
+        btnCalibrateT1.addEventListener('click', () => {
+            startSingleRodCalibration(btnCalibrateT1);
         });
     }
 
-    if (btnCalibrateT1) {
-        btnCalibrateT1.addEventListener('click', () => {
-            const t1 = prompt("T₁ sec:", "0.550");
-            if (t1 && !isNaN(parseFloat(t1))) {
-                tempT1 = parseFloat(t1);
-                calT1Display.innerText = `${tempT1.toFixed(3)} s`;
-                processCalibrationCalculations();
-            }
+    if (btnResetCalMeasurements) {
+        btnResetCalMeasurements.addEventListener('click', () => {
+            calReadingsT1 = [];
+            tempT1 = null;
+            if (calT1Display) calT1Display.innerText = "- s";
+            if (calCountBadge) calCountBadge.innerText = "0x gemeten";
+            if (calStatusHint) calStatusHint.innerText = "";
         });
     }
+
+    [calRodMass, calRodLength, calRodOffset, calInputI0].forEach(inputEl => {
+        if (inputEl) {
+            inputEl.addEventListener('input', () => {
+                // Sla aangepaste staafparameters direct op zodat de gebruiker ze niet opnieuw hoeft in te vullen
+                if (calRodMass && calRodMass.value) localStorage.setItem('cal_rod_mass', parseFloat(calRodMass.value));
+                if (calRodLength && calRodLength.value) localStorage.setItem('cal_rod_length_mm', parseFloat(calRodLength.value));
+                if (calRodOffset && calRodOffset.value) localStorage.setItem('cal_rod_offset_mm', parseFloat(calRodOffset.value));
+                processCalibrationCalculations();
+            });
+        }
+    });
 
     if (btnSaveCalibration) {
         btnSaveCalibration.addEventListener('click', () => {
+            // Sla altijd ook de staafgegevens en I0 op
+            if (calRodMass && calRodMass.value) localStorage.setItem('cal_rod_mass', parseFloat(calRodMass.value));
+            if (calRodLength && calRodLength.value) localStorage.setItem('cal_rod_length_mm', parseFloat(calRodLength.value));
+            if (calRodOffset && calRodOffset.value) localStorage.setItem('cal_rod_offset_mm', parseFloat(calRodOffset.value));
+            if (calInputI0 && calInputI0.value) {
+                I_0 = parseFloat(calInputI0.value);
+                localStorage.setItem('cal_i0', I_0);
+            }
+
             const result = processCalibrationCalculations();
             if (result) {
                 KAPPA = result.kappa;
@@ -1527,29 +1709,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 localStorage.setItem('cal_kappa', KAPPA);
                 localStorage.setItem('cal_i0', I_0);
                 alert(t('alertSaved'));
+            } else {
+                alert(t('alertNoData'));
             }
         });
     }
 });
-
-function processCalibrationCalculations() {
-    if (!tempT0 || !tempT1) return;
-    const m_kg = parseFloat(calRodMass.value) / 1000.0;
-    const L_m = parseFloat(calRodLength.value) / 100.0;
-    const d_m = parseFloat(calRodOffset.value) / 100.0;
-
-    const iRod = (1.0 / 12.0) * m_kg * (L_m ** 2) + m_kg * (d_m ** 2);
-    const factor0 = (tempT0 / (2 * Math.PI)) ** 2;
-    const factor1 = (tempT1 / (2 * Math.PI)) ** 2;
-
-    const calculatedKappa = iRod / (factor1 - factor0);
-    const calculatedI0 = calculatedKappa * factor0;
-
-    if (calResultKappa) calResultKappa.innerText = `${calculatedKappa.toFixed(4)} Nm/rad`;
-    if (calResultI0) calResultI0.innerText = `${calculatedI0.toFixed(5)} kg·m²`;
-
-    return { kappa: calculatedKappa, i0: calculatedI0 };
-}
 
 function exportToCSV() {
     if (racketDatabase.length === 0) {

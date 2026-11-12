@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="nl">
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -29,7 +29,7 @@
             <div id="measurePage" class="page active">
                 <div class="mode-switch-bar">
                     <button type="button" class="mode-btn active" id="modeSWBtn" data-i18n="modeSW">1. Swingweight (SW)</button>
-                    <button type="button" class="mode-btn" id="modeTwistBtn" data-i18n="modeTW">2. Twistweight (TW)</button>
+                    <button type="button" class="mode-btn" id="modeTwistBtn" id="modeTWBtn" data-i18n="modeTW">2. Twistweight (TW)</button>
                 </div>
 
                 <div class="dual-metric-overview">
@@ -62,7 +62,7 @@
                     <span class="sub-specs-display" id="subSpecsDisplay">
                         I_cm: <strong id="valIcm">-</strong> | Recoil: <strong id="valRecoil">-</strong>
                     </span>
-                    <button id="mainActionBtn" class="main-action-btn" data-i18n="btnHold">Hold at 45°</button>
+                    <button id="mainActionBtn" class="main-action-btn active-measure" data-i18n="btnStartMeasure">Start Meting</button>
                     <p id="statusMessage" class="status-message"></p>
                 </div>
 
@@ -151,60 +151,69 @@
                 </div>
             </div>
 
-            <!-- 4. Kalibratiepagina -->
+            <!-- 4. Kalibratiepagina (1-Staps Kalibratiestaaf Methode) -->
             <div id="calibratePage" class="page">
                 <h1 class="page-title" data-i18n="calTitle">MACHINE KALIBRATIE</h1>
-                
-                <div class="calibration-section">
-                    <h2 class="section-title" data-i18n="calStep1">STAP 1: LEGE KLEM METING</h2>
-                    <div class="mol-display">
-                        <span class="mol-label" data-i18n="calT0Label">Periode Lege Klem (T₀)</span>
-                        <span id="calT0Display" class="mol-value">- s</span>
-                    </div>
-                    <button id="btnCalibrateT0" class="cal-action-btn" data-i18n="calT0Btn">Meet T₀ (Leeg)</button>
-                </div>
 
                 <div class="calibration-section">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                        <h2 class="section-title" style="margin: 0;" data-i18n="calStep2">STAP 2: KALIBRATIESTAAF</h2>
+                        <h2 class="section-title" style="margin: 0;" data-i18n="calStep2">KALIBRATIESTAAF INSTELLINGEN & METING</h2>
                         <button id="infoToggleBtn" class="info-toggle-btn">ℹ</button>
                     </div>
 
                     <div id="rodInfoBox" class="info-collapsible">
                         <p><strong data-i18n="rodInfo">Parameters kalibratiestaaf:</strong></p>
                         <ul>
-                            <li data-i18n="rodMass"><strong>Massa (g):</strong> Gewicht van de staaf op weegschaal.</li>
-                            <li data-i18n="rodLength"><strong>Lengte (cm):</strong> Totale lengte van de staaf.</li>
-                            <li data-i18n="rodOffset"><strong>Offset d (cm):</strong> Afstand van midden staaf tot de rotatie-as.</li>
+                            <li data-i18n="rodMass"><strong>Massa (g):</strong> Exacte gewicht van de staaf op een weegschaal.</li>
+                            <li data-i18n="rodLength"><strong>Lengte (mm):</strong> Totale lengte van de staaf (bijv. 500 mm).</li>
+                            <li data-i18n="rodOffset"><strong>Offset d (mm):</strong> Afstand van het midden van de staaf tot de rotatie-as (bij 500 mm staaf en 90.5 mm aanslag is dit 250 - 90.5 = 159.5 mm).</li>
                         </ul>
                     </div>
 
-                    <div style="display: flex; gap: 8px; margin: 15px 0;">
+                    <div style="display: flex; gap: 8px; margin: 12px 0;">
                         <div style="flex: 1; text-align: left;">
                             <label style="font-size: 11px; color: var(--dark-text-secondary);" data-i18n="mass">Massa (g)</label>
-                            <input type="number" id="calRodMass" value="250" class="dark-input">
+                            <input type="number" id="calRodMass" value="153" step="0.1" class="dark-input">
                         </div>
                         <div style="flex: 1; text-align: left;">
-                            <label style="font-size: 11px; color: var(--dark-text-secondary);">Length (cm)</label>
-                            <input type="number" id="calRodLength" value="50" class="dark-input">
+                            <label style="font-size: 11px; color: var(--dark-text-secondary);" data-i18n="rodLengthLabel">Lengte (mm)</label>
+                            <input type="number" id="calRodLength" value="500" step="1" class="dark-input">
                         </div>
                         <div style="flex: 1; text-align: left;">
-                            <label style="font-size: 11px; color: var(--dark-text-secondary);">Offset (cm)</label>
-                            <input type="number" id="calRodOffset" value="15" class="dark-input">
+                            <label style="font-size: 11px; color: var(--dark-text-secondary);" data-i18n="rodOffsetLabel">Offset (mm)</label>
+                            <input type="number" id="calRodOffset" value="159.5" step="0.1" class="dark-input">
                         </div>
                     </div>
-                    <div class="mol-display">
-                        <span class="mol-label" data-i18n="calT1Label">Periode Teststaaf (T₁)</span>
+
+                    <div class="mol-display" style="margin-top: 10px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span class="mol-label" data-i18n="calT1Label">Gemeten Periode Kalibratiestaaf (T₁)</span>
+                            <span id="calCountBadge" style="font-size: 11px; color: var(--brand-teal); font-weight: bold;">0x gemeten</span>
+                        </div>
                         <span id="calT1Display" class="mol-value">- s</span>
+                        <span id="calRodInertiaInfo" style="display: block; font-size: 11px; color: var(--dark-text-secondary); margin-top: 4px;">
+                            Traagheid staaf (I_staaf): - kg·cm²
+                        </span>
                     </div>
-                    <button id="btnCalibrateT1" class="cal-action-btn" data-i18n="calT1Btn">Meet T₁ (Met Staaf)</button>
+
+                    <div style="display: flex; gap: 8px; margin-top: 10px;">
+                        <button id="btnCalibrateT1" class="cal-action-btn" style="flex: 3; background: var(--brand-teal); color: #fff; font-weight: bold;" data-i18n="calT1Btn">Meet Kalibratiestaaf (via Telefoon)</button>
+                        <button id="btnResetCalMeasurements" class="cal-action-btn" style="flex: 1;" title="Wis metingen">Reset</button>
+                    </div>
                 </div>
 
                 <div class="calibration-result">
-                    <h2 class="section-title" style="margin: 0 0 10px 0;" data-i18n="calResults">RESULTATEN</h2>
+                    <h2 class="section-title" style="margin: 0 0 10px 0;" data-i18n="calResults">KALIBRATIE RESULTATEN</h2>
                     <p>Veerstijfheid (κ): <span id="calResultKappa" class="result-value">1.4710 Nm/rad</span></p>
-                    <p>Eigen traagheid (I₀): <span id="calResultI0" class="result-value">0.00500 kg·m²</span></p>
-                    <button id="btnSaveCalibration" class="save-btn primary" style="margin-top:15px; width:100%;" data-i18n="calSave">Kalibratie Opslaan</button>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
+                        <span style="font-size: 13px;">Eigen traagheid klem (I₀):</span>
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <input type="number" id="calInputI0" value="0.00500" step="0.0001" class="dark-input" style="width: 95px; padding: 4px 6px; font-size: 12px; text-align: right;">
+                            <span style="font-size: 12px; color: var(--dark-text-secondary);">kg·m²</span>
+                        </div>
+                    </div>
+                    <p id="calStatusHint" style="font-size: 11px; color: var(--brand-green); margin-top: 8px;"></p>
+                    <button id="btnSaveCalibration" class="save-btn primary" style="margin-top:12px; width:100%;" data-i18n="calSave">Kalibratie Opslaan</button>
                 </div>
             </div>
 
