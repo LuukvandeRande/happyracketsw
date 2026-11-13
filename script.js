@@ -2,6 +2,7 @@
 
 // --- Machine Geometrie & Fysica Constanten ---
 const MACHINE_AXIS_CM = 9.05;  // 90.5 mm buttcap tot rotatie-as
+const MACHINE_AXIS_MM = 90.5;
 const STANDARD_AXIS_CM = 10.0; // 100.0 mm industriestandaard
 
 const PREP_DURATION_SEC = 3.0;   // 3 seconden om de machine met de hand aan te zwengelen
@@ -14,14 +15,21 @@ const PEAK_THRESHOLD = 0.25;
 let KAPPA = parseFloat(localStorage.getItem('cal_kappa')) || 1.471; 
 let I_0 = parseFloat(localStorage.getItem('cal_i0')) || 0.0050;   
 
-// Kalibratiestaaf opgeslagen instellingen (standaard: 153g, 500mm lengte, 159.5mm offset)
-let savedRodMass = parseFloat(localStorage.getItem('cal_rod_mass')) || 153.0;
-let savedRodLengthMm = parseFloat(localStorage.getItem('cal_rod_length_mm')) || 500.0;
-let savedRodOffsetMm = parseFloat(localStorage.getItem('cal_rod_offset_mm')) || 159.5;
+// Opgeslagen instellingen Staaf 1 (standaard: 153g, 500mm, 159.5mm offset)
+let savedRod1Mass = parseFloat(localStorage.getItem('cal_rod1_mass')) || 153.0;
+let savedRod1LengthMm = parseFloat(localStorage.getItem('cal_rod1_length_mm')) || 500.0;
+let savedRod1OffsetMm = parseFloat(localStorage.getItem('cal_rod1_offset_mm')) || 159.5;
 
-// Kalibratie meetreeks (T1 van de kalibratiestaaf)
+// Opgeslagen instellingen Staaf 2 (standaard: 180g, 1000mm, 409.5mm offset)
+let savedRod2Mass = parseFloat(localStorage.getItem('cal_rod2_mass')) || 180.0;
+let savedRod2LengthMm = parseFloat(localStorage.getItem('cal_rod2_length_mm')) || 1000.0;
+let savedRod2OffsetMm = parseFloat(localStorage.getItem('cal_rod2_offset_mm')) || 409.5;
+
+// Kalibratie meetreeksen (T1 voor Staaf 1, T2 voor Staaf 2)
 let calReadingsT1 = [];
+let calReadingsT2 = [];
 let tempT1 = null;
+let tempT2 = null;
 
 // --- Talen & Vertalingen ---
 let currentLang = localStorage.getItem('app_lang') || 'nl';
@@ -60,15 +68,18 @@ const translations = {
         aiPlaceholder: "Typ je vraag (bijv. verander de snaar naar...)",
         aiInstruction: "Je bent de professionele AI Tuning Assistent van 'HappyRacket'. Spreek en antwoord ALTIJD in vloeiend Nederlands en gebruik de term 'HappyRacket' af en toe subtiel. Spreek de klant enthousiast en direct aan.",
         calTitle: "MACHINE KALIBRATIE",
-        calStep2: "KALIBRATIESTAAF INSTELLINGEN & METING",
+        calStep1: "STAAF 1 (KORTE KALIBRATIESTAAF)",
+        calStep2: "STAAF 2 (LANGE / TWEEDE STAAF)",
         rodLengthLabel: "Lengte (mm)",
         rodOffsetLabel: "Offset (mm)",
-        rodInfo: "Parameters kalibratiestaaf:",
-        rodMass: "<strong>Massa (g):</strong> Exacte gewicht van de staaf op een weegschaal.",
-        rodLength: "<strong>Lengte (mm):</strong> Totale lengte van de staaf (bijv. 500 mm).",
-        rodOffset: "<strong>Offset d (mm):</strong> Afstand van het midden van de staaf tot de rotatie-as (bij 500 mm staaf en 90.5 mm aanslag is dit 250 - 90.5 = 159.5 mm).",
-        calT1Label: "Gemeten Periode Kalibratiestaaf (T₁)",
-        calT1Btn: "Meet Kalibratiestaaf (via Telefoon)",
+        rodInfo: "2-Staven Kalibratie (berekent κ én I₀):",
+        rodMass: "<strong>Massa (g):</strong> Exacte gewicht van de betreffende staaf op een weegschaal.",
+        rodLength: "<strong>Lengte (mm):</strong> Totale lengte van de staaf (bijv. 500 mm en 1000 mm).",
+        rodOffset: "<strong>Offset d (mm):</strong> Afstand van het midden van de staaf tot de rotatie-as. Bij plaatsing tegen de 90.5 mm buttcap-aanslag is dit: <code>(Lengte / 2) - 90.5 mm</code>.",
+        calT1Label: "Gemeten Periode Staaf 1 (T₁)",
+        calT1Btn: "Meet Staaf 1 (via Telefoon)",
+        calT2Label: "Gemeten Periode Staaf 2 (T₂)",
+        calT2Btn: "Meet Staaf 2 (via Telefoon)",
         calResults: "KALIBRATIE RESULTATEN",
         calSave: "Kalibratie Opslaan",
         settingsTitle: "INSTELLINGEN",
@@ -143,15 +154,18 @@ const translations = {
         aiPlaceholder: "Type your question (e.g., change string to...)",
         aiInstruction: "You are the professional AI Tuning Assistant for 'HappyRacket'. ALWAYS speak and answer in fluent English. Use English tennis terminology. Address the customer directly and enthusiastically.",
         calTitle: "MACHINE CALIBRATION",
-        calStep2: "CALIBRATION ROD SETTINGS & MEASUREMENT",
+        calStep1: "ROD 1 (SHORT CALIBRATION ROD)",
+        calStep2: "ROD 2 (LONG / SECOND ROD)",
         rodLengthLabel: "Length (mm)",
         rodOffsetLabel: "Offset (mm)",
-        rodInfo: "Calibration rod parameters:",
+        rodInfo: "2-Rod Calibration (calculates κ and I₀):",
         rodMass: "<strong>Mass (g):</strong> Exact weight of the rod on a scale.",
-        rodLength: "<strong>Length (mm):</strong> Total length of the rod (e.g., 500 mm).",
-        rodOffset: "<strong>Offset d (mm):</strong> Distance from rod center to pivot axis (for 500 mm rod and 90.5 mm buttcap stop: 250 - 90.5 = 159.5 mm).",
-        calT1Label: "Measured Period Calibration Rod (T₁)",
-        calT1Btn: "Measure Calibration Rod (with Phone)",
+        rodLength: "<strong>Length (mm):</strong> Total length of the rod (e.g., 500 mm and 1000 mm).",
+        rodOffset: "<strong>Offset d (mm):</strong> Distance from rod center to pivot axis. Against the 90.5 mm buttcap stop: <code>(Length / 2) - 90.5 mm</code>.",
+        calT1Label: "Measured Period Rod 1 (T₁)",
+        calT1Btn: "Measure Rod 1 (with Phone)",
+        calT2Label: "Measured Period Rod 2 (T₂)",
+        calT2Btn: "Measure Rod 2 (with Phone)",
         calResults: "CALIBRATION RESULTS",
         calSave: "Save Calibration",
         settingsTitle: "SETTINGS",
@@ -226,15 +240,18 @@ const translations = {
         aiPlaceholder: "Stell deine Frage (z.B. Saite ändern in...)",
         aiInstruction: "Du bist der professionelle KI-Tuning-Assistent von 'HappyRacket'. Sprich und antworte IMMER auf fließendem Deutsch. Verwende deutsche Tennis-Fachbegriffe. Sprich den Kunden begeistert und direkt an.",
         calTitle: "MASCHINENKALIBRIERUNG",
-        calStep2: "KALIBRIERSTAB EINSTELLUNGEN & MESSUNG",
+        calStep1: "STAB 1 (KURZER KALIBRIERSTAB)",
+        calStep2: "STAB 2 (LANGER / ZWEITER STAB)",
         rodLengthLabel: "Länge (mm)",
         rodOffsetLabel: "Offset (mm)",
-        rodInfo: "Parameter des Kalibrierungsstabs:",
+        rodInfo: "2-Stab-Kalibrierung (berechnet κ und I₀):",
         rodMass: "<strong>Masse (g):</strong> Exaktes Gewicht des Stabs auf der Waage.",
-        rodLength: "<strong>Länge (mm):</strong> Gesamtlänge des Stabs (z.B. 500 mm).",
-        rodOffset: "<strong>Offset d (mm):</strong> Abstand von Stabmitte zur Rotationsachse (bei 500 mm Stab und 90.5 mm Anschlag: 250 - 90.5 = 159.5 mm).",
-        calT1Label: "Gemessene Periode Kalibrierstab (T₁)",
-        calT1Btn: "Messe Kalibrierstab (mit Handy)",
+        rodLength: "<strong>Länge (mm):</strong> Gesamtlänge des Stabs (z.B. 500 mm und 1000 mm).",
+        rodOffset: "<strong>Offset d (mm):</strong> Abstand von Stabmitte zur Rotationsachse. Am 90.5 mm Anschlag: <code>(Länge / 2) - 90.5 mm</code>.",
+        calT1Label: "Gemessene Periode Stab 1 (T₁)",
+        calT1Btn: "Messe Stab 1 (mit Handy)",
+        calT2Label: "Gemessene Periode Stab 2 (T₂)",
+        calT2Btn: "Messe Stab 2 (mit Handy)",
         calResults: "KALIBRIERUNGSERGEBNISSE",
         calSave: "Kalibrierung Speichern",
         settingsTitle: "EINSTELLUNGEN",
@@ -296,7 +313,7 @@ let twistMeasurements = [];
 
 // Gyroscoop Signaalverwerking State
 let lastPeriodReadings = [];
-let armedDirection = 0; // 0 = wacht op piek, 1 = positieve piek gehaald, -1 = negatieve piek gehaald
+let armedDirection = 0;
 let prevOmega = null;
 let prevSampleTime = null;
 let lastZeroCrossTime = null;
@@ -411,19 +428,30 @@ const btnAddTempSW = document.getElementById('btnAddTempSW');
 const btnAddTempTW = document.getElementById('btnAddTempTW');
 const btnSaveEditedMeasurements = document.getElementById('btnSaveEditedMeasurements');
 
-// Calibration DOM
+// Calibration DOM (Staaf 1 & Staaf 2)
+const calRod1Mass = document.getElementById('calRod1Mass');
+const calRod1Length = document.getElementById('calRod1Length');
+const calRod1Offset = document.getElementById('calRod1Offset');
+const btnAutoOffset1 = document.getElementById('btnAutoOffset1');
 const calT1Display = document.getElementById('calT1Display');
-const calCountBadge = document.getElementById('calCountBadge');
-const calRodInertiaInfo = document.getElementById('calRodInertiaInfo');
+const calCount1Badge = document.getElementById('calCount1Badge');
+const calRod1InertiaInfo = document.getElementById('calRod1InertiaInfo');
 const btnCalibrateT1 = document.getElementById('btnCalibrateT1');
+
+const calRod2Mass = document.getElementById('calRod2Mass');
+const calRod2Length = document.getElementById('calRod2Length');
+const calRod2Offset = document.getElementById('calRod2Offset');
+const btnAutoOffset2 = document.getElementById('btnAutoOffset2');
+const calT2Display = document.getElementById('calT2Display');
+const calCount2Badge = document.getElementById('calCount2Badge');
+const calRod2InertiaInfo = document.getElementById('calRod2InertiaInfo');
+const btnCalibrateT2 = document.getElementById('btnCalibrateT2');
+
 const btnResetCalMeasurements = document.getElementById('btnResetCalMeasurements');
 const btnSaveCalibration = document.getElementById('btnSaveCalibration');
 const calResultKappa = document.getElementById('calResultKappa');
 const calInputI0 = document.getElementById('calInputI0');
 const calStatusHint = document.getElementById('calStatusHint');
-const calRodMass = document.getElementById('calRodMass');
-const calRodLength = document.getElementById('calRodLength');
-const calRodOffset = document.getElementById('calRodOffset');
 const infoToggleBtn = document.getElementById('infoToggleBtn');
 const rodInfoBox = document.getElementById('rodInfoBox');
 
@@ -498,7 +526,7 @@ async function startSensors() {
         }
     }
 
-    // 2. Fallback: DeviceMotionEvent (iOS Safari & bredere mobiele browsers)
+    // 2. Fallback: DeviceMotionEvent (iOS Safari & mobiele browsers)
     if ('DeviceMotionEvent' in window) {
         window.addEventListener('devicemotion', (event) => {
             if (!isMeasuring || !event.rotationRate) return;
@@ -520,7 +548,7 @@ async function startSensors() {
     updateUIState('error');
 }
 
-// NULDOORgang-DETECTIE MET HYSTERESIS EN INTERPOLATIE
+// NULDOORGANG-DETECTIE MET HYSTERESIS EN INTERPOLATIE
 function processGyroData(omega, now) {
     if (omega > PEAK_THRESHOLD) {
         armedDirection = 1;
@@ -554,7 +582,7 @@ function recordZeroCrossing(crossTime, direction) {
         const halfPeriodSec = (crossTime - lastZeroCrossTime) / 1000.0;
         const fullPeriodSec = halfPeriodSec * 2.0;
 
-        if (fullPeriodSec >= 0.20 && fullPeriodSec <= 2.50) {
+        if (fullPeriodSec >= 0.20 && fullPeriodSec <= 3.00) {
             lastPeriodReadings.push(fullPeriodSec);
         }
     }
@@ -817,15 +845,22 @@ function displayMeasurementsInList(currentMean) {
     });
 }
 
-// --- 1-STAPS KALIBRATIE MET KALIBRATIESTAAF VIA TELEFOON ---
-function startSingleRodCalibration(btnElement) {
+// --- 2-STAVEN KALIBRATIE MET TELEFOON (STAAF 1 & STAAF 2) ---
+function computeSingleRodInertia(massG, rawLength, rawOffset) {
+    const L_m = rawLength > 100 ? rawLength / 1000.0 : rawLength / 100.0;
+    const d_m = (rawLength > 100 || rawOffset > 40) ? rawOffset / 1000.0 : rawOffset / 100.0;
+    const m_kg = massG / 1000.0;
+    return (1.0 / 12.0) * m_kg * (L_m ** 2) + m_kg * (d_m ** 2);
+}
+
+function startRodCalibrationMeasurement(rodNumber, btnElement) {
     if (isMeasuring) return;
 
     if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
         DeviceMotionEvent.requestPermission().catch(() => {});
     }
 
-    const originalText = t('calT1Btn');
+    const originalText = rodNumber === 1 ? t('calT1Btn') : t('calT2Btn');
     let prep = Math.ceil(PREP_DURATION_SEC);
     btnElement.disabled = true;
     btnElement.style.backgroundColor = "var(--brand-green)";
@@ -861,11 +896,17 @@ function startSingleRodCalibration(btnElement) {
                     return;
                 }
 
-                calReadingsT1.push(avgPeriod);
-                tempT1 = calReadingsT1.reduce((a, b) => a + b, 0) / calReadingsT1.length;
-
-                if (calT1Display) calT1Display.innerText = `${tempT1.toFixed(4)} s`;
-                if (calCountBadge) calCountBadge.innerText = `${calReadingsT1.length}x gemeten`;
+                if (rodNumber === 1) {
+                    calReadingsT1.push(avgPeriod);
+                    tempT1 = calReadingsT1.reduce((a, b) => a + b, 0) / calReadingsT1.length;
+                    if (calT1Display) calT1Display.innerText = `${tempT1.toFixed(4)} s`;
+                    if (calCount1Badge) calCount1Badge.innerText = `${calReadingsT1.length}x gemeten`;
+                } else {
+                    calReadingsT2.push(avgPeriod);
+                    tempT2 = calReadingsT2.reduce((a, b) => a + b, 0) / calReadingsT2.length;
+                    if (calT2Display) calT2Display.innerText = `${tempT2.toFixed(4)} s`;
+                    if (calCount2Badge) calCount2Badge.innerText = `${calReadingsT2.length}x gemeten`;
+                }
 
                 btnElement.innerText = originalText;
                 btnElement.style.backgroundColor = "var(--brand-teal)";
@@ -877,45 +918,77 @@ function startSingleRodCalibration(btnElement) {
     }, 1000);
 }
 
+function saveRodInputsToStorage() {
+    if (calRod1Mass && calRod1Mass.value) localStorage.setItem('cal_rod1_mass', parseFloat(calRod1Mass.value));
+    if (calRod1Length && calRod1Length.value) localStorage.setItem('cal_rod1_length_mm', parseFloat(calRod1Length.value));
+    if (calRod1Offset && calRod1Offset.value) localStorage.setItem('cal_rod1_offset_mm', parseFloat(calRod1Offset.value));
+
+    if (calRod2Mass && calRod2Mass.value) localStorage.setItem('cal_rod2_mass', parseFloat(calRod2Mass.value));
+    if (calRod2Length && calRod2Length.value) localStorage.setItem('cal_rod2_length_mm', parseFloat(calRod2Length.value));
+    if (calRod2Offset && calRod2Offset.value) localStorage.setItem('cal_rod2_offset_mm', parseFloat(calRod2Offset.value));
+}
+
 function processCalibrationCalculations() {
-    const massG = parseFloat(calRodMass ? calRodMass.value : savedRodMass) || 153.0;
-    const rawLength = parseFloat(calRodLength ? calRodLength.value : savedRodLengthMm) || 500.0;
-    const rawOffset = parseFloat(calRodOffset ? calRodOffset.value : savedRodOffsetMm) || 159.5;
-    const customI0 = parseFloat(calInputI0 ? calInputI0.value : I_0);
-    const activeI0 = !isNaN(customI0) && customI0 >= 0 ? customI0 : I_0;
+    const m1 = parseFloat(calRod1Mass ? calRod1Mass.value : savedRod1Mass) || 153.0;
+    const l1 = parseFloat(calRod1Length ? calRod1Length.value : savedRod1LengthMm) || 500.0;
+    const d1 = parseFloat(calRod1Offset ? calRod1Offset.value : savedRod1OffsetMm) || 159.5;
 
-    // Slimme eenheid-omrekening: ondersteunt mm (bijv. 500 en 159.5) én cm (bijv. 50 en 15.95)
-    const L_m = rawLength > 100 ? rawLength / 1000.0 : rawLength / 100.0;
-    const d_m = (rawLength > 100 || rawOffset > 40) ? rawOffset / 1000.0 : rawOffset / 100.0;
-    const m_kg = massG / 1000.0;
+    const m2 = parseFloat(calRod2Mass ? calRod2Mass.value : savedRod2Mass) || 180.0;
+    const l2 = parseFloat(calRod2Length ? calRod2Length.value : savedRod2LengthMm) || 1000.0;
+    const d2 = parseFloat(calRod2Offset ? calRod2Offset.value : savedRod2OffsetMm) || 409.5;
 
-    // Traagheidsmoment van de kalibratiestaaf rond de rotatie-as: I_rod = (1/12)*m*L^2 + m*d^2
-    const iRod = (1.0 / 12.0) * m_kg * (L_m ** 2) + m_kg * (d_m ** 2);
-    const iRodSwUnits = iRod * 10000;
+    const iRod1 = computeSingleRodInertia(m1, l1, d1);
+    const iRod2 = computeSingleRodInertia(m2, l2, d2);
 
-    if (calRodInertiaInfo) {
-        calRodInertiaInfo.innerText = `Traagheid staaf om rotatie-as (I_staaf): ${iRodSwUnits.toFixed(1)} kg·cm²`;
+    if (calRod1InertiaInfo) {
+        calRod1InertiaInfo.innerText = `Traagheid Staaf 1 (I_staaf1): ${(iRod1 * 10000).toFixed(1)} kg·cm²`;
+    }
+    if (calRod2InertiaInfo) {
+        calRod2InertiaInfo.innerText = `Traagheid Staaf 2 (I_staaf2): ${(iRod2 * 10000).toFixed(1)} kg·cm²`;
     }
 
-    if (!tempT1 || tempT1 <= 0) {
-        return null;
-    }
+    // Geval A: Zowel Staaf 1 als Staaf 2 zijn gemeten -> Bereken zowel KAPPA als I_0 exact!
+    if (tempT1 && tempT2 && tempT1 > 0 && tempT2 > 0) {
+        const factor1 = (tempT1 / (2 * Math.PI)) ** 2;
+        const factor2 = (tempT2 / (2 * Math.PI)) ** 2;
 
-    const factor1 = (tempT1 / (2 * Math.PI)) ** 2;
-    const calculatedKappa = (iRod + activeI0) / factor1;
+        if (Math.abs(factor2 - factor1) > 1e-6 && Math.abs(iRod2 - iRod1) > 1e-6) {
+            const calculatedKappa = (iRod2 - iRod1) / (factor2 - factor1);
+            const rawI0 = calculatedKappa * factor1 - iRod1;
+            const calculatedI0 = Math.max(0.00001, rawI0);
 
-    if (calculatedKappa > 0) {
-        if (calResultKappa) calResultKappa.innerText = `${calculatedKappa.toFixed(4)} Nm/rad`;
-        if (calStatusHint) {
-            calStatusHint.innerText = `✅ Berekend op basis van T₁ = ${tempT1.toFixed(4)}s (${calReadingsT1.length} meting${calReadingsT1.length > 1 ? 'en' : ''}). Klik op Opslaan om te activeren.`;
+            if (calculatedKappa > 0) {
+                if (calResultKappa) calResultKappa.innerText = `${calculatedKappa.toFixed(4)} Nm/rad`;
+                if (calInputI0) calInputI0.value = calculatedI0.toFixed(5);
+                if (calStatusHint) {
+                    if (rawI0 < 0) {
+                        calStatusHint.innerText = `⚠️ Let op: I₀ kwam negatief uit (${rawI0.toFixed(5)}). Controleer of massa/offset kloppen en meet beide staven opnieuw.`;
+                    } else {
+                        calStatusHint.innerText = `✅ 2-Staven kalibratie compleet! Zowel κ (${calculatedKappa.toFixed(4)}) als I₀ (${calculatedI0.toFixed(5)}) zijn exact berekend.`;
+                    }
+                }
+                return { kappa: calculatedKappa, i0: calculatedI0 };
+            }
         }
-        return {
-            kappa: calculatedKappa,
-            i0: activeI0,
-            rodMass: massG,
-            rodLength: rawLength,
-            rodOffset: rawOffset
-        };
+    }
+
+    // Geval B: Slechts 1 van de 2 staven is gemeten -> Bereken KAPPA met huidige I_0
+    if ((tempT1 && tempT1 > 0) || (tempT2 && tempT2 > 0)) {
+        const activeI0 = parseFloat(calInputI0 ? calInputI0.value : I_0) || I_0;
+        const usedT = tempT1 || tempT2;
+        const usedIRod = tempT1 ? iRod1 : iRod2;
+        const rodLabel = tempT1 ? "Staaf 1" : "Staaf 2";
+
+        const factor = (usedT / (2 * Math.PI)) ** 2;
+        const calculatedKappa = (usedIRod + activeI0) / factor;
+
+        if (calculatedKappa > 0) {
+            if (calResultKappa) calResultKappa.innerText = `${calculatedKappa.toFixed(4)} Nm/rad`;
+            if (calStatusHint) {
+                calStatusHint.innerText = `ℹ️ Alleen ${rodLabel} gemeten (κ berekend met huidige I₀). Meet ook de andere staaf om I₀ automatisch te bepalen!`;
+            }
+            return { kappa: calculatedKappa, i0: activeI0 };
+        }
     }
 
     return null;
@@ -1343,10 +1416,15 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Laad opgeslagen kalibratie- & staafwaarden
-    if (calRodMass) calRodMass.value = savedRodMass;
-    if (calRodLength) calRodLength.value = savedRodLengthMm;
-    if (calRodOffset) calRodOffset.value = savedRodOffsetMm;
+    // Laad opgeslagen kalibratie- & staafwaarden voor Staaf 1 en Staaf 2
+    if (calRod1Mass) calRod1Mass.value = savedRod1Mass;
+    if (calRod1Length) calRod1Length.value = savedRod1LengthMm;
+    if (calRod1Offset) calRod1Offset.value = savedRod1OffsetMm;
+
+    if (calRod2Mass) calRod2Mass.value = savedRod2Mass;
+    if (calRod2Length) calRod2Length.value = savedRod2LengthMm;
+    if (calRod2Offset) calRod2Offset.value = savedRod2OffsetMm;
+
     if (calResultKappa) calResultKappa.innerText = `${KAPPA.toFixed(4)} Nm/rad`;
     if (calInputI0) calInputI0.value = I_0.toFixed(5);
 
@@ -1662,30 +1740,55 @@ document.addEventListener('DOMContentLoaded', () => {
         aiTargetTW.value = r.twist || '';
     });
 
-    // --- 1-Staps Kalibratie Events ---
+    // --- 2-Staven Kalibratie Events ---
     if (btnCalibrateT1) {
         btnCalibrateT1.addEventListener('click', () => {
-            startSingleRodCalibration(btnCalibrateT1);
+            startRodCalibrationMeasurement(1, btnCalibrateT1);
+        });
+    }
+
+    if (btnCalibrateT2) {
+        btnCalibrateT2.addEventListener('click', () => {
+            startRodCalibrationMeasurement(2, btnCalibrateT2);
+        });
+    }
+
+    if (btnAutoOffset1) {
+        btnAutoOffset1.addEventListener('click', () => {
+            const len = parseFloat(calRod1Length.value) || 500;
+            calRod1Offset.value = Math.abs((len / 2.0) - MACHINE_AXIS_MM).toFixed(1);
+            saveRodInputsToStorage();
+            processCalibrationCalculations();
+        });
+    }
+
+    if (btnAutoOffset2) {
+        btnAutoOffset2.addEventListener('click', () => {
+            const len = parseFloat(calRod2Length.value) || 1000;
+            calRod2Offset.value = Math.abs((len / 2.0) - MACHINE_AXIS_MM).toFixed(1);
+            saveRodInputsToStorage();
+            processCalibrationCalculations();
         });
     }
 
     if (btnResetCalMeasurements) {
         btnResetCalMeasurements.addEventListener('click', () => {
             calReadingsT1 = [];
+            calReadingsT2 = [];
             tempT1 = null;
+            tempT2 = null;
             if (calT1Display) calT1Display.innerText = "- s";
-            if (calCountBadge) calCountBadge.innerText = "0x gemeten";
+            if (calT2Display) calT2Display.innerText = "- s";
+            if (calCount1Badge) calCount1Badge.innerText = "0x gemeten";
+            if (calCount2Badge) calCount2Badge.innerText = "0x gemeten";
             if (calStatusHint) calStatusHint.innerText = "";
         });
     }
 
-    [calRodMass, calRodLength, calRodOffset, calInputI0].forEach(inputEl => {
+    [calRod1Mass, calRod1Length, calRod1Offset, calRod2Mass, calRod2Length, calRod2Offset, calInputI0].forEach(inputEl => {
         if (inputEl) {
             inputEl.addEventListener('input', () => {
-                // Sla aangepaste staafparameters direct op zodat de gebruiker ze niet opnieuw hoeft in te vullen
-                if (calRodMass && calRodMass.value) localStorage.setItem('cal_rod_mass', parseFloat(calRodMass.value));
-                if (calRodLength && calRodLength.value) localStorage.setItem('cal_rod_length_mm', parseFloat(calRodLength.value));
-                if (calRodOffset && calRodOffset.value) localStorage.setItem('cal_rod_offset_mm', parseFloat(calRodOffset.value));
+                saveRodInputsToStorage();
                 processCalibrationCalculations();
             });
         }
@@ -1693,20 +1796,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (btnSaveCalibration) {
         btnSaveCalibration.addEventListener('click', () => {
-            // Sla altijd ook de staafgegevens en I0 op
-            if (calRodMass && calRodMass.value) localStorage.setItem('cal_rod_mass', parseFloat(calRodMass.value));
-            if (calRodLength && calRodLength.value) localStorage.setItem('cal_rod_length_mm', parseFloat(calRodLength.value));
-            if (calRodOffset && calRodOffset.value) localStorage.setItem('cal_rod_offset_mm', parseFloat(calRodOffset.value));
-            if (calInputI0 && calInputI0.value) {
-                I_0 = parseFloat(calInputI0.value);
-                localStorage.setItem('cal_i0', I_0);
-            }
+            saveRodInputsToStorage();
 
             const result = processCalibrationCalculations();
             if (result) {
                 KAPPA = result.kappa;
                 I_0 = result.i0;
                 localStorage.setItem('cal_kappa', KAPPA);
+                localStorage.setItem('cal_i0', I_0);
+                alert(t('alertSaved'));
+            } else if (calInputI0 && calInputI0.value) {
+                I_0 = parseFloat(calInputI0.value);
                 localStorage.setItem('cal_i0', I_0);
                 alert(t('alertSaved'));
             } else {
