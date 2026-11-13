@@ -312,15 +312,15 @@ let swMeasurements = [];
 let twistMeasurements = [];
 
 // Gyroscoop Signaalverwerking State (Hoog-precisie modus)
-let risingCrossTimes = [];  // Tijdstippen van opgaande nuldoorgangen (in ms)
-let fallingCrossTimes = []; // Tijdstippen van neergaande nuldoorgangen (in ms)
-let halfPeriodReadings = []; // Fallback voor hele korte metingen
+let risingCrossTimes = [];  
+let fallingCrossTimes = []; 
+let halfPeriodReadings = []; 
 let armedDirection = 0;
 let prevOmega = null;
 let prevSampleTime = null;
 let lastZeroCrossTime = null;
 let lastCrossDirection = 0;
-let lockedAxis = null; // 'y' of 'z', automatisch vergrendeld bij de eerste piek
+let lockedAxis = null; 
 
 let measurementTimeoutId;
 let countdownIntervalId;
@@ -452,7 +452,8 @@ const btnCalibrateT2 = document.getElementById('btnCalibrateT2');
 
 const btnResetCalMeasurements = document.getElementById('btnResetCalMeasurements');
 const btnSaveCalibration = document.getElementById('btnSaveCalibration');
-const calResultKappa = document.getElementById('calResultKappa');
+// Nieuwe K en I0 Inputs!
+const calInputKappa = document.getElementById('calInputKappa');
 const calInputI0 = document.getElementById('calInputI0');
 const calStatusHint = document.getElementById('calStatusHint');
 const infoToggleBtn = document.getElementById('infoToggleBtn');
@@ -513,8 +514,6 @@ function resetGyroTracking() {
 function handleRawGyroAxes(y, z, now) {
     if (!isMeasuring) return;
 
-    // Vergrendel de dominante rotatie-as zodra de beweging op gang komt.
-    // Dit voorkomt dat Math.hypot() ruis van de andere as optelt rond het nulpunt!
     if (!lockedAxis) {
         if (Math.abs(y) > PEAK_THRESHOLD || Math.abs(z) > PEAK_THRESHOLD) {
             lockedAxis = Math.abs(y) >= Math.abs(z) ? 'y' : 'z';
@@ -528,7 +527,6 @@ function handleRawGyroAxes(y, z, now) {
 }
 
 async function startSensors() {
-    // 1. Moderne Gyroscope API op 100 Hz (Android Chrome)
     if ('Gyroscope' in window) {
         try {
             gyroscope = new Gyroscope({ frequency: 100 });
@@ -545,7 +543,6 @@ async function startSensors() {
         }
     }
 
-    // 2. Fallback: DeviceMotionEvent (iOS Safari & mobiele browsers)
     if ('DeviceMotionEvent' in window) {
         window.addEventListener('devicemotion', (event) => {
             if (!isMeasuring || !event.rotationRate) return;
@@ -559,13 +556,11 @@ async function startSensors() {
         return;
     }
 
-    // 3. Geen sensor aanwezig
     sensorAvailable = false;
     if (statusMessage) statusMessage.innerText = "Sensor offline. " + t('manualInputBtn');
     updateUIState('error');
 }
 
-// NULDOORGANG-DETECTIE MET HYSTERESIS EN SUB-MILLISECONDE INTERPOLATIE
 function processGyroData(omega, now) {
     if (omega > PEAK_THRESHOLD) {
         armedDirection = 1;
@@ -574,14 +569,12 @@ function processGyroData(omega, now) {
     }
 
     if (prevOmega !== null && prevSampleTime !== null) {
-        // Neergaande nuldoorgang (van + naar -)
         if (armedDirection === 1 && prevOmega > 0 && omega <= 0) {
             const fraction = prevOmega / (prevOmega - omega);
             const exactCrossTime = prevSampleTime + fraction * (now - prevSampleTime);
             recordZeroCrossing(exactCrossTime, -1);
             armedDirection = 0;
         }
-        // Opgaande nuldoorgang (van - naar +)
         else if (armedDirection === -1 && prevOmega < 0 && omega >= 0) {
             const fraction = Math.abs(prevOmega) / (Math.abs(prevOmega) + omega);
             const exactCrossTime = prevSampleTime + fraction * (now - prevSampleTime);
@@ -595,7 +588,6 @@ function processGyroData(omega, now) {
 }
 
 function recordZeroCrossing(crossTime, direction) {
-    // Sla opgaande en neergaande doorgangen apart op zodat we hele periodes (zelfde richting!) kunnen meten
     if (direction === 1) {
         risingCrossTimes.push(crossTime);
     } else {
@@ -614,23 +606,19 @@ function recordZeroCrossing(crossTime, direction) {
     lastCrossDirection = direction;
 }
 
-// Berekent de zuivere periode door enkel hele cycli in dezelfde richting te pakken (elimineert scheefstand/asymmetrie!)
 function computeHighPrecisionPeriod() {
     let fullCyclePeriods = [];
 
-    // Volledige cycli tussen opgaande nuldoorgangen (t_i - t_{i-1})
     for (let i = 1; i < risingCrossTimes.length; i++) {
         const p = (risingCrossTimes[i] - risingCrossTimes[i - 1]) / 1000.0;
         if (p >= 0.20 && p <= 3.00) fullCyclePeriods.push(p);
     }
 
-    // Volledige cycli tussen neergaande nuldoorgangen (t_i - t_{i-1})
     for (let i = 1; i < fallingCrossTimes.length; i++) {
         const p = (fallingCrossTimes[i] - fallingCrossTimes[i - 1]) / 1000.0;
         if (p >= 0.20 && p <= 3.00) fullCyclePeriods.push(p);
     }
 
-    // Gebruik bij voorkeur de symmetrische volledige cycli; val alleen terug op halve cycli als er te weinig zijn
     const sourceReadings = fullCyclePeriods.length >= 2 ? fullCyclePeriods : halfPeriodReadings;
     if (!sourceReadings || sourceReadings.length === 0) return null;
 
@@ -638,7 +626,6 @@ function computeHighPrecisionPeriod() {
         return sourceReadings.reduce((a, b) => a + b, 0) / sourceReadings.length;
     }
 
-    // Mediaan-filter: verwijdert eventuele loslaat-trilling van de allereerste zwaai
     const sorted = [...sourceReadings].sort((a, b) => a - b);
     const median = sorted[Math.floor(sorted.length / 2)];
     const filtered = sorted.filter(p => Math.abs(p - median) / median < 0.05);
@@ -906,7 +893,7 @@ function startRodCalibrationMeasurement(rodNumber, btnElement) {
     }
 
     const originalText = rodNumber === 1 ? t('calT1Btn') : t('calT2Btn');
-    const calRecordSec = 3.0; // Kalibratiestaven zijn lichter, 3.0s is ideaal
+    const calRecordSec = 3.0;
     let prep = Math.ceil(PREP_DURATION_SEC);
     btnElement.disabled = true;
     btnElement.style.backgroundColor = "var(--brand-green)";
@@ -958,7 +945,6 @@ function startRodCalibrationMeasurement(rodNumber, btnElement) {
                 btnElement.style.backgroundColor = "var(--brand-teal)";
                 btnElement.style.color = "#fff";
 
-                // Sla nieuwe kalibratiewaarden ook direct automatisch op!
                 const result = processCalibrationCalculations();
                 if (result && tempT1 && tempT2) {
                     KAPPA = result.kappa;
@@ -1000,7 +986,6 @@ function processCalibrationCalculations() {
         calRod2InertiaInfo.innerText = `Traagheid Staaf 2 (I_staaf2): ${(iRod2 * 10000).toFixed(1)} kg·cm²`;
     }
 
-    // Geval A: Zowel Staaf 1 als Staaf 2 zijn gemeten -> Bereken zowel KAPPA als I_0 exact!
     if (tempT1 && tempT2 && tempT1 > 0 && tempT2 > 0) {
         const factor1 = (tempT1 / (2 * Math.PI)) ** 2;
         const factor2 = (tempT2 / (2 * Math.PI)) ** 2;
@@ -1011,13 +996,13 @@ function processCalibrationCalculations() {
             const calculatedI0 = Math.max(0.00001, rawI0);
 
             if (calculatedKappa > 0) {
-                if (calResultKappa) calResultKappa.innerText = `${calculatedKappa.toFixed(4)} Nm/rad`;
+                if (calInputKappa) calInputKappa.value = calculatedKappa.toFixed(4);
                 if (calInputI0) calInputI0.value = calculatedI0.toFixed(5);
                 if (calStatusHint) {
                     if (rawI0 < 0) {
                         calStatusHint.innerText = `⚠️ Let op: I₀ kwam negatief uit (${rawI0.toFixed(5)}). Controleer of massa/offset kloppen en meet beide staven opnieuw.`;
                     } else {
-                        calStatusHint.innerText = `✅ 2-Staven kalibratie compleet & actief! Zowel κ (${calculatedKappa.toFixed(4)}) als I₀ (${calculatedI0.toFixed(5)}) zijn opgeslagen.`;
+                        calStatusHint.innerText = `✅ 2-Staven kalibratie compleet & actief! Zowel κ (${calculatedKappa.toFixed(4)}) als I₀ (${calculatedI0.toFixed(5)}) zijn berekend.`;
                     }
                 }
                 return { kappa: calculatedKappa, i0: calculatedI0 };
@@ -1025,7 +1010,6 @@ function processCalibrationCalculations() {
         }
     }
 
-    // Geval B: Slechts 1 van de 2 staven is gemeten -> Bereken KAPPA met huidige I_0
     if ((tempT1 && tempT1 > 0) || (tempT2 && tempT2 > 0)) {
         const activeI0 = parseFloat(calInputI0 ? calInputI0.value : I_0) || I_0;
         const usedT = tempT1 || tempT2;
@@ -1036,7 +1020,7 @@ function processCalibrationCalculations() {
         const calculatedKappa = (usedIRod + activeI0) / factor;
 
         if (calculatedKappa > 0) {
-            if (calResultKappa) calResultKappa.innerText = `${calculatedKappa.toFixed(4)} Nm/rad`;
+            if (calInputKappa) calInputKappa.value = calculatedKappa.toFixed(4);
             if (calStatusHint) {
                 calStatusHint.innerText = `ℹ️ Alleen ${rodLabel} gemeten (κ berekend met huidige I₀). Meet ook de andere staaf om I₀ automatisch te bepalen!`;
             }
@@ -1478,7 +1462,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (calRod2Length) calRod2Length.value = savedRod2LengthMm;
     if (calRod2Offset) calRod2Offset.value = savedRod2OffsetMm;
 
-    if (calResultKappa) calResultKappa.innerText = `${KAPPA.toFixed(4)} Nm/rad`;
+    if (calInputKappa) calInputKappa.value = KAPPA.toFixed(4);
     if (calInputI0) calInputI0.value = I_0.toFixed(5);
 
     processCalibrationCalculations();
@@ -1838,7 +1822,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    [calRod1Mass, calRod1Length, calRod1Offset, calRod2Mass, calRod2Length, calRod2Offset, calInputI0].forEach(inputEl => {
+    [calRod1Mass, calRod1Length, calRod1Offset, calRod2Mass, calRod2Length, calRod2Offset, calInputKappa, calInputI0].forEach(inputEl => {
         if (inputEl) {
             inputEl.addEventListener('input', () => {
                 saveRodInputsToStorage();
@@ -1850,21 +1834,19 @@ document.addEventListener('DOMContentLoaded', () => {
     if (btnSaveCalibration) {
         btnSaveCalibration.addEventListener('click', () => {
             saveRodInputsToStorage();
-
             const result = processCalibrationCalculations();
-            if (result) {
-                KAPPA = result.kappa;
-                I_0 = result.i0;
+            
+            // Val altijd terug op wat er op dat moment in de invulvelden staat, 
+            // zelfs als er geen recente staafmeting in het geheugen zit!
+            if (calInputKappa && calInputKappa.value) {
+                KAPPA = parseFloat(calInputKappa.value);
                 localStorage.setItem('cal_kappa', KAPPA);
-                localStorage.setItem('cal_i0', I_0);
-                alert(t('alertSaved'));
-            } else if (calInputI0 && calInputI0.value) {
+            }
+            if (calInputI0 && calInputI0.value) {
                 I_0 = parseFloat(calInputI0.value);
                 localStorage.setItem('cal_i0', I_0);
-                alert(t('alertSaved'));
-            } else {
-                alert(t('alertNoData'));
             }
+            alert(t('alertSaved'));
         });
     }
 });

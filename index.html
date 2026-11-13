@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>HappyRacket Tuning Pro</title>
-    <link rel="stylesheet" href="styles.css?v=3" />
+    <link rel="stylesheet" href="styles.css" />
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#262E44">
     <script>
@@ -239,21 +239,29 @@
                     <button id="btnCalibrateT2" class="cal-action-btn" style="width: 100%; margin-top: 8px; background: var(--brand-teal); color: #fff; font-weight: bold;" data-i18n="calT2Btn">Meet Staaf 2 (via Telefoon)</button>
                 </div>
 
-                <!-- RESULTATEN -->
+                <!-- RESULTATEN (NU BEIDE HANDMATIG AAN TE PASSEN) -->
                 <div class="calibration-result">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                         <h2 class="section-title" style="margin: 0;" data-i18n="calResults">KALIBRATIE RESULTATEN</h2>
                         <button id="btnResetCalMeasurements" style="background:none; border:none; color:var(--dark-text-secondary); font-size:11px; cursor:pointer; text-decoration:underline;">Reset Metingen</button>
                     </div>
-                    <p>Veerstijfheid (κ): <span id="calResultKappa" class="result-value">1.4710 Nm/rad</span></p>
+                    
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
+                        <span style="font-size: 13px;">Veerstijfheid (κ):</span>
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <input type="number" id="calInputKappa" value="1.4710" step="0.0001" class="dark-input" style="width: 100px; padding: 4px 6px; font-size: 12px; text-align: right; color: var(--brand-green); font-weight:bold;">
+                            <span style="font-size: 12px; color: var(--dark-text-secondary);">Nm/rad</span>
+                        </div>
+                    </div>
+                    
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
                         <span style="font-size: 13px;">Eigen traagheid klem (I₀):</span>
                         <div style="display: flex; align-items: center; gap: 6px;">
-                            <input type="number" id="calInputI0" value="0.00500" step="0.0001" class="dark-input" style="width: 100px; padding: 4px 6px; font-size: 12px; text-align: right;">
+                            <input type="number" id="calInputI0" value="0.00500" step="0.00001" class="dark-input" style="width: 100px; padding: 4px 6px; font-size: 12px; text-align: right; color: var(--brand-green); font-weight:bold;">
                             <span style="font-size: 12px; color: var(--dark-text-secondary);">kg·m²</span>
                         </div>
                     </div>
-                    <p id="calStatusHint" style="font-size: 11px; color: var(--brand-green); margin-top: 8px;"></p>
+                    <p id="calStatusHint" style="font-size: 11px; color: var(--brand-teal); margin-top: 10px;">Je kunt K en I₀ hierboven ook handmatig invullen/herstellen zonder staven te meten.</p>
                     <button id="btnSaveCalibration" class="save-btn primary" style="margin-top:10px; width:100%;" data-i18n="calSave">Kalibratie Opslaan</button>
                 </div>
             </div>
@@ -433,6 +441,6 @@
         </nav>
     </div>
 
-    <script src="script.js?v=3"></script>
+    <script src="script.js"></script>
 </body>
 </html>
