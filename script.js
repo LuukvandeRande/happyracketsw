@@ -6,10 +6,10 @@ const MACHINE_AXIS_MM = 90.5;
 const STANDARD_AXIS_CM = 10.0; // 100.0 mm industriestandaard
 
 const PREP_DURATION_SEC = 3.0;   // 3 seconden om de machine met de hand aan te zwengelen
-const RECORD_DURATION_SEC = 3.0; // 3 seconden zuivere oscillatie-opname
-const WAIT_DURATION_SEC = 4.0;   // Korte rusttijd na meting
+const RECORD_DURATION_SEC = 4.0; // 4 seconden opname voor meer volledige periodes
+const WAIT_DURATION_SEC = 3.0;   // Korte rusttijd na meting
 
-// Gyroscoop drempelwaarde (rad/s): negeert ruis bij stilstand volledig (voorkomt 147.6 bug)
+// Gyroscoop drempelwaarde (rad/s): negeert ruis bij stilstand volledig
 const PEAK_THRESHOLD = 0.25;
 
 let KAPPA = parseFloat(localStorage.getItem('cal_kappa')) || 1.471; 
@@ -118,7 +118,7 @@ const translations = {
         swMeasurementsTitle: "Swingweight Metingen",
         twMeasurementsTitle: "Twistweight Metingen",
         saveMeasurementsBtn: "Metingen Opslaan & Herberekenen",
-        prepText: "Geef een zetje! Start in",
+        prepText: "Houd op spanning & laat los! Start in",
         errQuiet: "Geen beweging gedetecteerd (machine stond stil)."
     },
     en: {
@@ -204,7 +204,7 @@ const translations = {
         swMeasurementsTitle: "Swingweight Measurements",
         twMeasurementsTitle: "Twistweight Measurements",
         saveMeasurementsBtn: "Save Measurements & Recalculate",
-        prepText: "Push cradle! Starts in",
+        prepText: "Hold deflected & release! Starts in",
         errQuiet: "No motion detected (cradle was still)."
     },
     de: {
@@ -290,7 +290,7 @@ const translations = {
         swMeasurementsTitle: "Schwunggewicht Messungen",
         twMeasurementsTitle: "Twistweight Messungen",
         saveMeasurementsBtn: "Messungen Speichern & Berechnen",
-        prepText: "Anschieben! Start in",
+        prepText: "Auslenken & loslassen! Start in",
         errQuiet: "Keine Bewegung erkannt (Maschine stand still)."
     }
 };
@@ -311,13 +311,16 @@ let currentMode = 'sw';
 let swMeasurements = [];
 let twistMeasurements = [];
 
-// Gyroscoop Signaalverwerking State
-let lastPeriodReadings = [];
+// Gyroscoop Signaalverwerking State (Hoog-precisie modus)
+let risingCrossTimes = [];  // Tijdstippen van opgaande nuldoorgangen (in ms)
+let fallingCrossTimes = []; // Tijdstippen van neergaande nuldoorgangen (in ms)
+let halfPeriodReadings = []; // Fallback voor hele korte metingen
 let armedDirection = 0;
 let prevOmega = null;
 let prevSampleTime = null;
 let lastZeroCrossTime = null;
 let lastCrossDirection = 0;
+let lockedAxis = null; // 'y' of 'z', automatisch vergrendeld bij de eerste piek
 
 let measurementTimeoutId;
 let countdownIntervalId;
@@ -496,26 +499,42 @@ let gyroscope = null;
 let sensorAvailable = false;
 
 function resetGyroTracking() {
-    lastPeriodReadings = [];
+    risingCrossTimes = [];
+    fallingCrossTimes = [];
+    halfPeriodReadings = [];
     armedDirection = 0;
     prevOmega = null;
     prevSampleTime = null;
     lastZeroCrossTime = null;
     lastCrossDirection = 0;
+    lockedAxis = null;
+}
+
+function handleRawGyroAxes(y, z, now) {
+    if (!isMeasuring) return;
+
+    // Vergrendel de dominante rotatie-as zodra de beweging op gang komt.
+    // Dit voorkomt dat Math.hypot() ruis van de andere as optelt rond het nulpunt!
+    if (!lockedAxis) {
+        if (Math.abs(y) > PEAK_THRESHOLD || Math.abs(z) > PEAK_THRESHOLD) {
+            lockedAxis = Math.abs(y) >= Math.abs(z) ? 'y' : 'z';
+        } else {
+            return;
+        }
+    }
+
+    const omega = lockedAxis === 'y' ? y : z;
+    processGyroData(omega, now);
 }
 
 async function startSensors() {
-    // 1. Moderne Gyroscope API (Android Chrome)
+    // 1. Moderne Gyroscope API op 100 Hz (Android Chrome)
     if ('Gyroscope' in window) {
         try {
-            gyroscope = new Gyroscope({ frequency: 60 });
+            gyroscope = new Gyroscope({ frequency: 100 });
             gyroscope.addEventListener('reading', () => {
                 if (!isMeasuring) return;
-                const y = gyroscope.y || 0;
-                const z = gyroscope.z || 0;
-                const dominantSign = Math.abs(y) >= Math.abs(z) ? Math.sign(y) : Math.sign(z);
-                const combinedOmega = dominantSign * Math.hypot(y, z);
-                processGyroData(combinedOmega, performance.now());
+                handleRawGyroAxes(gyroscope.y || 0, gyroscope.z || 0, performance.now());
             });
             await gyroscope.start();
             sensorAvailable = true;
@@ -533,9 +552,7 @@ async function startSensors() {
             const degToRad = Math.PI / 180;
             const y = (event.rotationRate.beta || 0) * degToRad;
             const z = (event.rotationRate.gamma || 0) * degToRad;
-            const dominantSign = Math.abs(y) >= Math.abs(z) ? Math.sign(y) : Math.sign(z);
-            const combinedOmega = dominantSign * Math.hypot(y, z);
-            processGyroData(combinedOmega, performance.now());
+            handleRawGyroAxes(y, z, performance.now());
         });
         sensorAvailable = true;
         updateUIState('ready_to_measure');
@@ -548,7 +565,7 @@ async function startSensors() {
     updateUIState('error');
 }
 
-// NULDOORGANG-DETECTIE MET HYSTERESIS EN INTERPOLATIE
+// NULDOORGANG-DETECTIE MET HYSTERESIS EN SUB-MILLISECONDE INTERPOLATIE
 function processGyroData(omega, now) {
     if (omega > PEAK_THRESHOLD) {
         armedDirection = 1;
@@ -557,14 +574,14 @@ function processGyroData(omega, now) {
     }
 
     if (prevOmega !== null && prevSampleTime !== null) {
-        // Neergaande nuldoorgang
+        // Neergaande nuldoorgang (van + naar -)
         if (armedDirection === 1 && prevOmega > 0 && omega <= 0) {
             const fraction = prevOmega / (prevOmega - omega);
             const exactCrossTime = prevSampleTime + fraction * (now - prevSampleTime);
             recordZeroCrossing(exactCrossTime, -1);
             armedDirection = 0;
         }
-        // Opgaande nuldoorgang
+        // Opgaande nuldoorgang (van - naar +)
         else if (armedDirection === -1 && prevOmega < 0 && omega >= 0) {
             const fraction = Math.abs(prevOmega) / (Math.abs(prevOmega) + omega);
             const exactCrossTime = prevSampleTime + fraction * (now - prevSampleTime);
@@ -578,27 +595,55 @@ function processGyroData(omega, now) {
 }
 
 function recordZeroCrossing(crossTime, direction) {
+    // Sla opgaande en neergaande doorgangen apart op zodat we hele periodes (zelfde richting!) kunnen meten
+    if (direction === 1) {
+        risingCrossTimes.push(crossTime);
+    } else {
+        fallingCrossTimes.push(crossTime);
+    }
+
     if (lastZeroCrossTime !== null && lastCrossDirection !== direction) {
         const halfPeriodSec = (crossTime - lastZeroCrossTime) / 1000.0;
         const fullPeriodSec = halfPeriodSec * 2.0;
 
         if (fullPeriodSec >= 0.20 && fullPeriodSec <= 3.00) {
-            lastPeriodReadings.push(fullPeriodSec);
+            halfPeriodReadings.push(fullPeriodSec);
         }
     }
     lastZeroCrossTime = crossTime;
     lastCrossDirection = direction;
 }
 
-function computeCleanMeanPeriod(readings) {
-    if (!readings || readings.length === 0) return null;
-    if (readings.length <= 2) {
-        return readings.reduce((a, b) => a + b, 0) / readings.length;
+// Berekent de zuivere periode door enkel hele cycli in dezelfde richting te pakken (elimineert scheefstand/asymmetrie!)
+function computeHighPrecisionPeriod() {
+    let fullCyclePeriods = [];
+
+    // Volledige cycli tussen opgaande nuldoorgangen (t_i - t_{i-1})
+    for (let i = 1; i < risingCrossTimes.length; i++) {
+        const p = (risingCrossTimes[i] - risingCrossTimes[i - 1]) / 1000.0;
+        if (p >= 0.20 && p <= 3.00) fullCyclePeriods.push(p);
     }
-    const sorted = [...readings].sort((a, b) => a - b);
+
+    // Volledige cycli tussen neergaande nuldoorgangen (t_i - t_{i-1})
+    for (let i = 1; i < fallingCrossTimes.length; i++) {
+        const p = (fallingCrossTimes[i] - fallingCrossTimes[i - 1]) / 1000.0;
+        if (p >= 0.20 && p <= 3.00) fullCyclePeriods.push(p);
+    }
+
+    // Gebruik bij voorkeur de symmetrische volledige cycli; val alleen terug op halve cycli als er te weinig zijn
+    const sourceReadings = fullCyclePeriods.length >= 2 ? fullCyclePeriods : halfPeriodReadings;
+    if (!sourceReadings || sourceReadings.length === 0) return null;
+
+    if (sourceReadings.length <= 2) {
+        return sourceReadings.reduce((a, b) => a + b, 0) / sourceReadings.length;
+    }
+
+    // Mediaan-filter: verwijdert eventuele loslaat-trilling van de allereerste zwaai
+    const sorted = [...sourceReadings].sort((a, b) => a - b);
     const median = sorted[Math.floor(sorted.length / 2)];
-    const filtered = sorted.filter(p => Math.abs(p - median) / median < 0.12);
+    const filtered = sorted.filter(p => Math.abs(p - median) / median < 0.05);
     const listToUse = filtered.length > 0 ? filtered : sorted;
+
     return listToUse.reduce((a, b) => a + b, 0) / listToUse.length;
 }
 
@@ -701,7 +746,7 @@ function updateUIState(state) {
             if (statusMessage) statusMessage.innerText = t('tapStart');
             break;
         case 'preparing':
-            mainActionBtn.textContent = "Geef zetje...";
+            mainActionBtn.textContent = "Houd klaar...";
             mainActionBtn.classList.add('disabled');
             mainActionBtn.classList.remove('active-measure');
             break;
@@ -751,8 +796,8 @@ function startMeasurementWorkflow() {
             measurementTimeoutId = setTimeout(() => {
                 isMeasuring = false;
                 
-                const avgPeriod = computeCleanMeanPeriod(lastPeriodReadings);
-                if (!avgPeriod || lastPeriodReadings.length < 2) {
+                const avgPeriod = computeHighPrecisionPeriod();
+                if (!avgPeriod || halfPeriodReadings.length < 2) {
                     if (statusMessage) statusMessage.innerText = t('errQuiet');
                     mainActionBtn.textContent = `Start ${currentMode === 'sw' ? 'SW' : 'TWIST'}`;
                     mainActionBtn.dataset.state = 'ready_to_measure';
@@ -861,6 +906,7 @@ function startRodCalibrationMeasurement(rodNumber, btnElement) {
     }
 
     const originalText = rodNumber === 1 ? t('calT1Btn') : t('calT2Btn');
+    const calRecordSec = 3.0; // Kalibratiestaven zijn lichter, 3.0s is ideaal
     let prep = Math.ceil(PREP_DURATION_SEC);
     btnElement.disabled = true;
     btnElement.style.backgroundColor = "var(--brand-green)";
@@ -875,7 +921,7 @@ function startRodCalibrationMeasurement(rodNumber, btnElement) {
             clearInterval(prepInterval);
             btnElement.style.backgroundColor = "var(--brand-navy-dark)";
             btnElement.style.color = "#fff";
-            btnElement.innerText = `${t('recording')} (${RECORD_DURATION_SEC}s)`;
+            btnElement.innerText = `${t('recording')} (${calRecordSec}s)`;
 
             resetGyroTracking();
             isMeasuring = true;
@@ -884,8 +930,8 @@ function startRodCalibrationMeasurement(rodNumber, btnElement) {
                 isMeasuring = false;
                 btnElement.disabled = false;
 
-                const avgPeriod = computeCleanMeanPeriod(lastPeriodReadings);
-                if (!avgPeriod || lastPeriodReadings.length < 2) {
+                const avgPeriod = computeHighPrecisionPeriod();
+                if (!avgPeriod || halfPeriodReadings.length < 2) {
                     btnElement.innerText = t('errQuiet');
                     btnElement.style.backgroundColor = "var(--red-outlier)";
                     setTimeout(() => {
@@ -912,8 +958,15 @@ function startRodCalibrationMeasurement(rodNumber, btnElement) {
                 btnElement.style.backgroundColor = "var(--brand-teal)";
                 btnElement.style.color = "#fff";
 
-                processCalibrationCalculations();
-            }, RECORD_DURATION_SEC * 1000);
+                // Sla nieuwe kalibratiewaarden ook direct automatisch op!
+                const result = processCalibrationCalculations();
+                if (result && tempT1 && tempT2) {
+                    KAPPA = result.kappa;
+                    I_0 = result.i0;
+                    localStorage.setItem('cal_kappa', KAPPA);
+                    localStorage.setItem('cal_i0', I_0);
+                }
+            }, calRecordSec * 1000);
         }
     }, 1000);
 }
@@ -964,7 +1017,7 @@ function processCalibrationCalculations() {
                     if (rawI0 < 0) {
                         calStatusHint.innerText = `⚠️ Let op: I₀ kwam negatief uit (${rawI0.toFixed(5)}). Controleer of massa/offset kloppen en meet beide staven opnieuw.`;
                     } else {
-                        calStatusHint.innerText = `✅ 2-Staven kalibratie compleet! Zowel κ (${calculatedKappa.toFixed(4)}) als I₀ (${calculatedI0.toFixed(5)}) zijn exact berekend.`;
+                        calStatusHint.innerText = `✅ 2-Staven kalibratie compleet & actief! Zowel κ (${calculatedKappa.toFixed(4)}) als I₀ (${calculatedI0.toFixed(5)}) zijn opgeslagen.`;
                     }
                 }
                 return { kappa: calculatedKappa, i0: calculatedI0 };
