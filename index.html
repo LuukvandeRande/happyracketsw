@@ -4,12 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>HappyRacket Tuning Pro</title>
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=5" />
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#262E44">
     <script>
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('sw.js');
+        navigator.serviceWorker.register('sw.js?v=5');
       }
     </script>
 </head>
@@ -60,7 +60,7 @@
                     <span class="active-mode-badge" id="activeModeBadge" data-i18n="badgeSW">SWINGWEIGHT METING</span>
                     <p class="current-value" id="currentDisplayValue">0.0</p>
                     <span class="sub-specs-display" id="subSpecsDisplay">
-                        I_cm: <strong id="valIcm">-</strong> | Recoil: <strong id="valRecoil">-</strong>
+                        I_cm: <strong id="valIcm">-</strong> | Recoil: <strong id="valRecoil">-</strong> | T: <strong id="valPeriod">-</strong>
                     </span>
                     <button id="mainActionBtn" class="main-action-btn active-measure" data-i18n="btnStartMeasure">Start Meting</button>
                     <p id="statusMessage" class="status-message"></p>
@@ -162,7 +162,7 @@
                     <p><strong data-i18n="rodInfo">2-Staven Kalibratie (berekent κ én I₀):</strong></p>
                     <ul>
                         <li data-i18n="rodMass"><strong>Massa (g):</strong> Exacte gewicht van de betreffende staaf op een weegschaal.</li>
-                        <li data-i18n="rodLength"><strong>Lengte (mm):</strong> Totale lengte van de staaf (bijv. 500 mm en 1000 mm).</li>
+                        <li data-i18n="rodLength"><strong>Lengte (mm):</strong> Totale lengte van de staaf (bijv. 500 mm en 404 mm).</li>
                         <li data-i18n="rodOffset"><strong>Offset d (mm):</strong> Afstand van het midden van de staaf tot de rotatie-as. Bij plaatsing tegen de 90.5 mm buttcap-aanslag is dit: <code>(Lengte / 2) - 90.5 mm</code>.</li>
                     </ul>
                 </div>
@@ -170,14 +170,14 @@
                 <!-- STAAF 1 -->
                 <div class="calibration-section">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                        <h2 class="section-title" style="margin: 0;" data-i18n="calStep1">STAAF 1 (KORTE KALIBRATIESTAAF)</h2>
+                        <h2 class="section-title" style="margin: 0;" data-i18n="calStep1">STAAF 1 (ALUMINIUM STAAF)</h2>
                         <button type="button" id="btnAutoOffset1" style="background:none; border:1px solid var(--brand-teal); color:var(--brand-teal); border-radius:6px; font-size:10px; padding:2px 6px; cursor:pointer;">Auto Offset (90.5mm)</button>
                     </div>
 
                     <div style="display: flex; gap: 8px; margin: 8px 0;">
                         <div style="flex: 1; text-align: left;">
                             <label style="font-size: 11px; color: var(--dark-text-secondary);" data-i18n="mass">Massa (g)</label>
-                            <input type="number" id="calRod1Mass" value="153" step="0.1" class="dark-input">
+                            <input type="number" id="calRod1Mass" value="159.1" step="0.1" class="dark-input">
                         </div>
                         <div style="flex: 1; text-align: left;">
                             <label style="font-size: 11px; color: var(--dark-text-secondary);" data-i18n="rodLengthLabel">Lengte (mm)</label>
@@ -206,22 +206,22 @@
                 <!-- STAAF 2 -->
                 <div class="calibration-section">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                        <h2 class="section-title" style="margin: 0;" data-i18n="calStep2">STAAF 2 (LANGE / TWEEDE STAAF)</h2>
+                        <h2 class="section-title" style="margin: 0;" data-i18n="calStep2">STAAF 2 (TWEEDE / RVS STAAF)</h2>
                         <button type="button" id="btnAutoOffset2" style="background:none; border:1px solid var(--brand-teal); color:var(--brand-teal); border-radius:6px; font-size:10px; padding:2px 6px; cursor:pointer;">Auto Offset (90.5mm)</button>
                     </div>
 
                     <div style="display: flex; gap: 8px; margin: 8px 0;">
                         <div style="flex: 1; text-align: left;">
                             <label style="font-size: 11px; color: var(--dark-text-secondary);" data-i18n="mass">Massa (g)</label>
-                            <input type="number" id="calRod2Mass" value="180" step="0.1" class="dark-input">
+                            <input type="number" id="calRod2Mass" value="158.97" step="0.01" class="dark-input">
                         </div>
                         <div style="flex: 1; text-align: left;">
                             <label style="font-size: 11px; color: var(--dark-text-secondary);" data-i18n="rodLengthLabel">Lengte (mm)</label>
-                            <input type="number" id="calRod2Length" value="1000" step="1" class="dark-input">
+                            <input type="number" id="calRod2Length" value="404" step="1" class="dark-input">
                         </div>
                         <div style="flex: 1; text-align: left;">
                             <label style="font-size: 11px; color: var(--dark-text-secondary);" data-i18n="rodOffsetLabel">Offset (mm)</label>
-                            <input type="number" id="calRod2Offset" value="409.5" step="0.1" class="dark-input">
+                            <input type="number" id="calRod2Offset" value="111.5" step="0.1" class="dark-input">
                         </div>
                     </div>
 
@@ -239,7 +239,7 @@
                     <button id="btnCalibrateT2" class="cal-action-btn" style="width: 100%; margin-top: 8px; background: var(--brand-teal); color: #fff; font-weight: bold;" data-i18n="calT2Btn">Meet Staaf 2 (via Telefoon)</button>
                 </div>
 
-                <!-- RESULTATEN (NU BEIDE HANDMATIG AAN TE PASSEN) -->
+                <!-- RESULTATEN (BEIDE HANDMATIG AAN TE PASSEN & DIRECT ACTIEF) -->
                 <div class="calibration-result">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                         <h2 class="section-title" style="margin: 0;" data-i18n="calResults">KALIBRATIE RESULTATEN</h2>
@@ -249,7 +249,7 @@
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
                         <span style="font-size: 13px;">Veerstijfheid (κ):</span>
                         <div style="display: flex; align-items: center; gap: 6px;">
-                            <input type="number" id="calInputKappa" value="1.4710" step="0.0001" class="dark-input" style="width: 100px; padding: 4px 6px; font-size: 12px; text-align: right; color: var(--brand-green); font-weight:bold;">
+                            <input type="number" id="calInputKappa" value="1.8525" step="0.0001" class="dark-input" style="width: 100px; padding: 4px 6px; font-size: 12px; text-align: right; color: var(--brand-green); font-weight:bold;">
                             <span style="font-size: 12px; color: var(--dark-text-secondary);">Nm/rad</span>
                         </div>
                     </div>
@@ -257,11 +257,11 @@
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
                         <span style="font-size: 13px;">Eigen traagheid klem (I₀):</span>
                         <div style="display: flex; align-items: center; gap: 6px;">
-                            <input type="number" id="calInputI0" value="0.00500" step="0.00001" class="dark-input" style="width: 100px; padding: 4px 6px; font-size: 12px; text-align: right; color: var(--brand-green); font-weight:bold;">
+                            <input type="number" id="calInputI0" value="0.00042" step="0.00001" class="dark-input" style="width: 100px; padding: 4px 6px; font-size: 12px; text-align: right; color: var(--brand-green); font-weight:bold;">
                             <span style="font-size: 12px; color: var(--dark-text-secondary);">kg·m²</span>
                         </div>
                     </div>
-                    <p id="calStatusHint" style="font-size: 11px; color: var(--brand-teal); margin-top: 10px;">Je kunt K en I₀ hierboven ook handmatig invullen/herstellen zonder staven te meten.</p>
+                    <p id="calStatusHint" style="font-size: 11px; color: var(--brand-teal); margin-top: 10px;">Je kunt κ en I₀ hierboven ook altijd handmatig invullen en opslaan.</p>
                     <button id="btnSaveCalibration" class="save-btn primary" style="margin-top:10px; width:100%;" data-i18n="calSave">Kalibratie Opslaan</button>
                 </div>
             </div>
@@ -292,7 +292,7 @@
                 <div class="settings-group">
                     <p>Machine Axis: <span class="setting-value">90.5 mm buttcap</span></p>
                     <p>Standard Ref-Axis: <span class="setting-value">100.0 mm (10 cm)</span></p>
-                    <p>Steiner Correction: <span class="setting-value">Active</span></p>
+                    <p>Actieve κ / I₀: <span id="settingsActiveCal" class="setting-value">1.8525 / 0.00042</span></p>
                 </div>
             </div>
         </div>
@@ -441,6 +441,6 @@
         </nav>
     </div>
 
-    <script src="script.js"></script>
+    <script src="script.js?v=5"></script>
 </body>
 </html>

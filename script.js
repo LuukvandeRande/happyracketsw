@@ -1,4 +1,4 @@
-// script.js
+// script.js (v5)
 
 // --- Machine Geometrie & Fysica Constanten ---
 const MACHINE_AXIS_CM = 9.05;  // 90.5 mm buttcap tot rotatie-as
@@ -12,18 +12,35 @@ const WAIT_DURATION_SEC = 3.0;   // Korte rusttijd na meting
 // Gyroscoop drempelwaarde (rad/s): negeert ruis bij stilstand volledig
 const PEAK_THRESHOLD = 0.25;
 
-let KAPPA = parseFloat(localStorage.getItem('cal_kappa')) || 1.471; 
-let I_0 = parseFloat(localStorage.getItem('cal_i0')) || 0.0050;   
+// Standaard gekalibreerde machinewaarden (1.8525 Nm/rad en 0.00042 kg·m²)
+const DEFAULT_KAPPA = 1.8525;
+const DEFAULT_I0 = 0.00042;
 
-// Opgeslagen instellingen Staaf 1 (standaard: 153g, 500mm, 159.5mm offset)
-let savedRod1Mass = parseFloat(localStorage.getItem('cal_rod1_mass')) || 153.0;
-let savedRod1LengthMm = parseFloat(localStorage.getItem('cal_rod1_length_mm')) || 500.0;
-let savedRod1OffsetMm = parseFloat(localStorage.getItem('cal_rod1_offset_mm')) || 159.5;
+function parseNumInput(val, fallback) {
+    if (val === undefined || val === null || val === '') return fallback;
+    const parsed = parseFloat(String(val).replace(',', '.'));
+    return isNaN(parsed) ? fallback : parsed;
+}
 
-// Opgeslagen instellingen Staaf 2 (standaard: 180g, 1000mm, 409.5mm offset)
-let savedRod2Mass = parseFloat(localStorage.getItem('cal_rod2_mass')) || 180.0;
-let savedRod2LengthMm = parseFloat(localStorage.getItem('cal_rod2_length_mm')) || 1000.0;
-let savedRod2OffsetMm = parseFloat(localStorage.getItem('cal_rod2_offset_mm')) || 409.5;
+let savedKappaStorage = parseNumInput(localStorage.getItem('cal_kappa'), DEFAULT_KAPPA);
+// Als de oude fabrieksstandaard (1.471) nog per ongeluk in storage stond naast I0=0.00042, herstel direct naar 1.8525
+if (Math.abs(savedKappaStorage - 1.471) < 0.001) {
+    savedKappaStorage = DEFAULT_KAPPA;
+    localStorage.setItem('cal_kappa', DEFAULT_KAPPA);
+}
+
+let KAPPA = savedKappaStorage;
+let I_0 = parseNumInput(localStorage.getItem('cal_i0'), DEFAULT_I0);
+
+// Opgeslagen instellingen Staaf 1 (standaard: 159.1g, 500mm, 159.5mm offset)
+let savedRod1Mass = parseNumInput(localStorage.getItem('cal_rod1_mass'), 159.1);
+let savedRod1LengthMm = parseNumInput(localStorage.getItem('cal_rod1_length_mm'), 500.0);
+let savedRod1OffsetMm = parseNumInput(localStorage.getItem('cal_rod1_offset_mm'), 159.5);
+
+// Opgeslagen instellingen Staaf 2 (standaard: 158.97g, 404mm, 111.5mm offset)
+let savedRod2Mass = parseNumInput(localStorage.getItem('cal_rod2_mass'), 158.97);
+let savedRod2LengthMm = parseNumInput(localStorage.getItem('cal_rod2_length_mm'), 404.0);
+let savedRod2OffsetMm = parseNumInput(localStorage.getItem('cal_rod2_offset_mm'), 111.5);
 
 // Kalibratie meetreeksen (T1 voor Staaf 1, T2 voor Staaf 2)
 let calReadingsT1 = [];
@@ -68,13 +85,13 @@ const translations = {
         aiPlaceholder: "Typ je vraag (bijv. verander de snaar naar...)",
         aiInstruction: "Je bent de professionele AI Tuning Assistent van 'HappyRacket'. Spreek en antwoord ALTIJD in vloeiend Nederlands en gebruik de term 'HappyRacket' af en toe subtiel. Spreek de klant enthousiast en direct aan.",
         calTitle: "MACHINE KALIBRATIE",
-        calStep1: "STAAF 1 (KORTE KALIBRATIESTAAF)",
-        calStep2: "STAAF 2 (LANGE / TWEEDE STAAF)",
+        calStep1: "STAAF 1 (ALUMINIUM STAAF)",
+        calStep2: "STAAF 2 (TWEEDE / RVS STAAF)",
         rodLengthLabel: "Lengte (mm)",
         rodOffsetLabel: "Offset (mm)",
         rodInfo: "2-Staven Kalibratie (berekent κ én I₀):",
         rodMass: "<strong>Massa (g):</strong> Exacte gewicht van de betreffende staaf op een weegschaal.",
-        rodLength: "<strong>Lengte (mm):</strong> Totale lengte van de staaf (bijv. 500 mm en 1000 mm).",
+        rodLength: "<strong>Lengte (mm):</strong> Totale lengte van de staaf (bijv. 500 mm en 404 mm).",
         rodOffset: "<strong>Offset d (mm):</strong> Afstand van het midden van de staaf tot de rotatie-as. Bij plaatsing tegen de 90.5 mm buttcap-aanslag is dit: <code>(Lengte / 2) - 90.5 mm</code>.",
         calT1Label: "Gemeten Periode Staaf 1 (T₁)",
         calT1Btn: "Meet Staaf 1 (via Telefoon)",
@@ -154,13 +171,13 @@ const translations = {
         aiPlaceholder: "Type your question (e.g., change string to...)",
         aiInstruction: "You are the professional AI Tuning Assistant for 'HappyRacket'. ALWAYS speak and answer in fluent English. Use English tennis terminology. Address the customer directly and enthusiastically.",
         calTitle: "MACHINE CALIBRATION",
-        calStep1: "ROD 1 (SHORT CALIBRATION ROD)",
-        calStep2: "ROD 2 (LONG / SECOND ROD)",
+        calStep1: "ROD 1 (ALUMINUM ROD)",
+        calStep2: "ROD 2 (SECOND / STEEL ROD)",
         rodLengthLabel: "Length (mm)",
         rodOffsetLabel: "Offset (mm)",
         rodInfo: "2-Rod Calibration (calculates κ and I₀):",
         rodMass: "<strong>Mass (g):</strong> Exact weight of the rod on a scale.",
-        rodLength: "<strong>Length (mm):</strong> Total length of the rod (e.g., 500 mm and 1000 mm).",
+        rodLength: "<strong>Length (mm):</strong> Total length of the rod (e.g., 500 mm and 404 mm).",
         rodOffset: "<strong>Offset d (mm):</strong> Distance from rod center to pivot axis. Against the 90.5 mm buttcap stop: <code>(Length / 2) - 90.5 mm</code>.",
         calT1Label: "Measured Period Rod 1 (T₁)",
         calT1Btn: "Measure Rod 1 (with Phone)",
@@ -240,13 +257,13 @@ const translations = {
         aiPlaceholder: "Stell deine Frage (z.B. Saite ändern in...)",
         aiInstruction: "Du bist der professionelle KI-Tuning-Assistent von 'HappyRacket'. Sprich und antworte IMMER auf fließendem Deutsch. Verwende deutsche Tennis-Fachbegriffe. Sprich den Kunden begeistert und direkt an.",
         calTitle: "MASCHINENKALIBRIERUNG",
-        calStep1: "STAB 1 (KURZER KALIBRIERSTAB)",
-        calStep2: "STAB 2 (LANGER / ZWEITER STAB)",
+        calStep1: "STAB 1 (ALUMINIUMSTAB)",
+        calStep2: "STAB 2 (ZWEITER / EDELSTAHLSTAB)",
         rodLengthLabel: "Länge (mm)",
         rodOffsetLabel: "Offset (mm)",
         rodInfo: "2-Stab-Kalibrierung (berechnet κ und I₀):",
         rodMass: "<strong>Masse (g):</strong> Exaktes Gewicht des Stabs auf der Waage.",
-        rodLength: "<strong>Länge (mm):</strong> Gesamtlänge des Stabs (z.B. 500 mm und 1000 mm).",
+        rodLength: "<strong>Länge (mm):</strong> Gesamtlänge des Stabs (z.B. 500 mm und 404 mm).",
         rodOffset: "<strong>Offset d (mm):</strong> Abstand von Stabmitte zur Rotationsachse. Am 90.5 mm Anschlag: <code>(Länge / 2) - 90.5 mm</code>.",
         calT1Label: "Gemessene Periode Stab 1 (T₁)",
         calT1Btn: "Messe Stab 1 (mit Handy)",
@@ -310,6 +327,7 @@ const STRING_PROFILES = [
 let currentMode = 'sw'; 
 let swMeasurements = [];
 let twistMeasurements = [];
+let lastMeasuredPeriodSec = null;
 
 // Gyroscoop Signaalverwerking State (Hoog-precisie modus)
 let risingCrossTimes = [];  
@@ -373,6 +391,7 @@ const racketBalanceInput = document.getElementById('racketBalance');
 
 const valIcm = document.getElementById('valIcm');
 const valRecoil = document.getElementById('valRecoil');
+const valPeriod = document.getElementById('valPeriod');
 const racketNameInput = document.getElementById('racketNameInput');
 const btnSaveRacket = document.getElementById('btnSaveRacket');
 
@@ -395,6 +414,7 @@ const btnSendChat = document.getElementById('btnSendChat');
 // Settings Elements
 const apiKeyInput = document.getElementById('apiKeyInput');
 const btnSaveApiKey = document.getElementById('btnSaveApiKey');
+const settingsActiveCal = document.getElementById('settingsActiveCal');
 
 // Modal Elements
 const racketDetailModal = document.getElementById('racketDetailModal');
@@ -452,12 +472,17 @@ const btnCalibrateT2 = document.getElementById('btnCalibrateT2');
 
 const btnResetCalMeasurements = document.getElementById('btnResetCalMeasurements');
 const btnSaveCalibration = document.getElementById('btnSaveCalibration');
-// Nieuwe K en I0 Inputs!
 const calInputKappa = document.getElementById('calInputKappa');
 const calInputI0 = document.getElementById('calInputI0');
 const calStatusHint = document.getElementById('calStatusHint');
 const infoToggleBtn = document.getElementById('infoToggleBtn');
 const rodInfoBox = document.getElementById('rodInfoBox');
+
+function updateSettingsCalDisplay() {
+    if (settingsActiveCal) {
+        settingsActiveCal.innerText = `κ = ${KAPPA.toFixed(4)} | I₀ = ${I_0.toFixed(5)}`;
+    }
+}
 
 function applyLanguage(lang) {
     currentLang = lang;
@@ -636,8 +661,11 @@ function computeHighPrecisionPeriod() {
 
 // --- Fysica Model (Swingweight & Twistweight) ---
 function calculateRacketMetrics(period) {
-    const m_kg = parseFloat(racketMassInput.value) / 1000.0;
-    const bp_m = parseFloat(racketBalanceInput.value) / 100.0;
+    lastMeasuredPeriodSec = period;
+    if (valPeriod) valPeriod.innerText = `${period.toFixed(3)}s`;
+
+    const m_kg = parseNumInput(racketMassInput.value, 305) / 1000.0;
+    const bp_m = parseNumInput(racketBalanceInput.value, 32.0) / 100.0;
     const d_mach_m = MACHINE_AXIS_CM / 100.0;
     const d_std_m = STANDARD_AXIS_CM / 100.0;
 
@@ -676,8 +704,8 @@ function recalculateSubMetricsFromMean(meanVal) {
         valOverviewTW.innerText = meanVal.toFixed(1);
         return;
     }
-    const m_kg = parseFloat(racketMassInput.value) / 1000.0;
-    const bp_m = parseFloat(racketBalanceInput.value) / 100.0;
+    const m_kg = parseNumInput(racketMassInput.value, 305) / 1000.0;
+    const bp_m = parseNumInput(racketBalanceInput.value, 32.0) / 100.0;
     const d_std_m = STANDARD_AXIS_CM / 100.0;
 
     const iStd = meanVal / 10000;
@@ -708,15 +736,18 @@ function recalcDerivedMetrics(r) {
 }
 
 function promptManualInput() {
-    const defaultVal = currentMode === 'sw' ? "1.00" : "0.416";
+    const defaultVal = currentMode === 'sw' ? "0.848" : "0.416";
     const modeName = currentMode === 'sw' ? t('swTitle') : t('twTitle');
-    const hint = currentMode === 'sw' ? "~0.95 - 1.05s" : "~0.38 - 0.45s";
+    const hint = currentMode === 'sw' ? "~0.80 - 0.90s" : "~0.38 - 0.45s";
     
     const input = prompt(`${t('manualPrompt')} ${modeName}\n${t('manualPromptDesc')} (${hint}):`, defaultVal);
-    if (input && !isNaN(parseFloat(input)) && parseFloat(input) > 0) {
-        const calculatedVal = calculateRacketMetrics(parseFloat(input));
-        if (calculatedVal !== null) {
-            addMeasurementToGroup(calculatedVal);
+    if (input) {
+        const parsed = parseNumInput(input, -1);
+        if (parsed > 0) {
+            const calculatedVal = calculateRacketMetrics(parsed);
+            if (calculatedVal !== null) {
+                addMeasurementToGroup(calculatedVal);
+            }
         }
     }
 }
@@ -838,6 +869,7 @@ function updateMeasurementGroupDisplay() {
         if (groupDifference) groupDifference.innerText = '-';
         if (currentDisplayValue) currentDisplayValue.innerText = '0.0';
         if (measurementList) measurementList.innerHTML = '';
+        if (valPeriod) valPeriod.innerText = '-';
         if (currentMode === 'twist') {
             if (valIcm) valIcm.innerText = '-';
             if (valRecoil) valRecoil.innerText = '-';
@@ -951,6 +983,7 @@ function startRodCalibrationMeasurement(rodNumber, btnElement) {
                     I_0 = result.i0;
                     localStorage.setItem('cal_kappa', KAPPA);
                     localStorage.setItem('cal_i0', I_0);
+                    updateSettingsCalDisplay();
                 }
             }, calRecordSec * 1000);
         }
@@ -958,23 +991,23 @@ function startRodCalibrationMeasurement(rodNumber, btnElement) {
 }
 
 function saveRodInputsToStorage() {
-    if (calRod1Mass && calRod1Mass.value) localStorage.setItem('cal_rod1_mass', parseFloat(calRod1Mass.value));
-    if (calRod1Length && calRod1Length.value) localStorage.setItem('cal_rod1_length_mm', parseFloat(calRod1Length.value));
-    if (calRod1Offset && calRod1Offset.value) localStorage.setItem('cal_rod1_offset_mm', parseFloat(calRod1Offset.value));
+    if (calRod1Mass && calRod1Mass.value) localStorage.setItem('cal_rod1_mass', parseNumInput(calRod1Mass.value, 159.1));
+    if (calRod1Length && calRod1Length.value) localStorage.setItem('cal_rod1_length_mm', parseNumInput(calRod1Length.value, 500));
+    if (calRod1Offset && calRod1Offset.value) localStorage.setItem('cal_rod1_offset_mm', parseNumInput(calRod1Offset.value, 159.5));
 
-    if (calRod2Mass && calRod2Mass.value) localStorage.setItem('cal_rod2_mass', parseFloat(calRod2Mass.value));
-    if (calRod2Length && calRod2Length.value) localStorage.setItem('cal_rod2_length_mm', parseFloat(calRod2Length.value));
-    if (calRod2Offset && calRod2Offset.value) localStorage.setItem('cal_rod2_offset_mm', parseFloat(calRod2Offset.value));
+    if (calRod2Mass && calRod2Mass.value) localStorage.setItem('cal_rod2_mass', parseNumInput(calRod2Mass.value, 158.97));
+    if (calRod2Length && calRod2Length.value) localStorage.setItem('cal_rod2_length_mm', parseNumInput(calRod2Length.value, 404));
+    if (calRod2Offset && calRod2Offset.value) localStorage.setItem('cal_rod2_offset_mm', parseNumInput(calRod2Offset.value, 111.5));
 }
 
 function processCalibrationCalculations() {
-    const m1 = parseFloat(calRod1Mass ? calRod1Mass.value : savedRod1Mass) || 153.0;
-    const l1 = parseFloat(calRod1Length ? calRod1Length.value : savedRod1LengthMm) || 500.0;
-    const d1 = parseFloat(calRod1Offset ? calRod1Offset.value : savedRod1OffsetMm) || 159.5;
+    const m1 = parseNumInput(calRod1Mass ? calRod1Mass.value : savedRod1Mass, 159.1);
+    const l1 = parseNumInput(calRod1Length ? calRod1Length.value : savedRod1LengthMm, 500.0);
+    const d1 = parseNumInput(calRod1Offset ? calRod1Offset.value : savedRod1OffsetMm, 159.5);
 
-    const m2 = parseFloat(calRod2Mass ? calRod2Mass.value : savedRod2Mass) || 180.0;
-    const l2 = parseFloat(calRod2Length ? calRod2Length.value : savedRod2LengthMm) || 1000.0;
-    const d2 = parseFloat(calRod2Offset ? calRod2Offset.value : savedRod2OffsetMm) || 409.5;
+    const m2 = parseNumInput(calRod2Mass ? calRod2Mass.value : savedRod2Mass, 158.97);
+    const l2 = parseNumInput(calRod2Length ? calRod2Length.value : savedRod2LengthMm, 404.0);
+    const d2 = parseNumInput(calRod2Offset ? calRod2Offset.value : savedRod2OffsetMm, 111.5);
 
     const iRod1 = computeSingleRodInertia(m1, l1, d1);
     const iRod2 = computeSingleRodInertia(m2, l2, d2);
@@ -1011,7 +1044,7 @@ function processCalibrationCalculations() {
     }
 
     if ((tempT1 && tempT1 > 0) || (tempT2 && tempT2 > 0)) {
-        const activeI0 = parseFloat(calInputI0 ? calInputI0.value : I_0) || I_0;
+        const activeI0 = parseNumInput(calInputI0 ? calInputI0.value : I_0, I_0);
         const usedT = tempT1 || tempT2;
         const usedIRod = tempT1 ? iRod1 : iRod2;
         const rodLabel = tempT1 ? "Staaf 1" : "Staaf 2";
@@ -1047,8 +1080,8 @@ function saveCurrentRacketToDB() {
 
     if (existingIndex >= 0) {
         racketEntry = racketDatabase[existingIndex];
-        racketEntry.mass = parseFloat(racketMassInput.value);
-        racketEntry.balance = parseFloat(racketBalanceInput.value);
+        racketEntry.mass = parseNumInput(racketMassInput.value, 305);
+        racketEntry.balance = parseNumInput(racketBalanceInput.value, 32.0);
         if (meanSW > 0) racketEntry.sw = parseFloat(meanSW.toFixed(1));
         if (meanTwist > 0) racketEntry.twist = parseFloat(meanTwist.toFixed(1));
         racketEntry.icm = parseFloat(currentCalculatedIcm.toFixed(1));
@@ -1061,8 +1094,8 @@ function saveCurrentRacketToDB() {
             id: Date.now(),
             name: name,
             stringName: "", 
-            mass: parseFloat(racketMassInput.value),
-            balance: parseFloat(racketBalanceInput.value),
+            mass: parseNumInput(racketMassInput.value, 305),
+            balance: parseNumInput(racketBalanceInput.value, 32.0),
             stringMainProfile: 'poly_std',
             stringCrossProfile: 'poly_std',
             tensionMain: 24.0,
@@ -1464,6 +1497,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (calInputKappa) calInputKappa.value = KAPPA.toFixed(4);
     if (calInputI0) calInputI0.value = I_0.toFixed(5);
+    updateSettingsCalDisplay();
 
     processCalibrationCalculations();
     populateStringDropdowns();
@@ -1640,10 +1674,10 @@ document.addEventListener('DOMContentLoaded', () => {
     btnSaveModalString.addEventListener('click', () => {
         const r = racketDatabase.find(item => item.id === activeModalRacketId);
         if (r) {
-            const newMass = parseFloat(modalMassInput.value) || r.mass;
-            const newBalance = parseFloat(modalBalanceInput.value) || r.balance;
-            const newSW = parseFloat(modalSWInput.value) || 0;
-            const newTwist = parseFloat(modalTwistInput.value) || 0;
+            const newMass = parseNumInput(modalMassInput.value, r.mass);
+            const newBalance = parseNumInput(modalBalanceInput.value, r.balance);
+            const newSW = parseNumInput(modalSWInput.value, 0);
+            const newTwist = parseNumInput(modalTwistInput.value, 0);
 
             let overwriteWarning = false;
             if ((newSW !== r.sw && r.swMeasurements && r.swMeasurements.length > 1) || 
@@ -1671,8 +1705,8 @@ document.addEventListener('DOMContentLoaded', () => {
             r.stringName = modalStringNameInput.value.trim();
             r.stringMainProfile = modalSelectMain.value;
             r.stringCrossProfile = modalSelectCross.value;
-            r.tensionMain = parseFloat(modalTensionMain.value) || 0;
-            r.tensionCross = parseFloat(modalTensionCross.value) || 0;
+            r.tensionMain = parseNumInput(modalTensionMain.value, 0);
+            r.tensionCross = parseNumInput(modalTensionCross.value, 0);
 
             localStorage.setItem('racket_db', JSON.stringify(racketDatabase));
             
@@ -1792,7 +1826,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (btnAutoOffset1) {
         btnAutoOffset1.addEventListener('click', () => {
-            const len = parseFloat(calRod1Length.value) || 500;
+            const len = parseNumInput(calRod1Length.value, 500);
             calRod1Offset.value = Math.abs((len / 2.0) - MACHINE_AXIS_MM).toFixed(1);
             saveRodInputsToStorage();
             processCalibrationCalculations();
@@ -1801,7 +1835,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (btnAutoOffset2) {
         btnAutoOffset2.addEventListener('click', () => {
-            const len = parseFloat(calRod2Length.value) || 1000;
+            const len = parseNumInput(calRod2Length.value, 404);
             calRod2Offset.value = Math.abs((len / 2.0) - MACHINE_AXIS_MM).toFixed(1);
             saveRodInputsToStorage();
             processCalibrationCalculations();
@@ -1822,7 +1856,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    [calRod1Mass, calRod1Length, calRod1Offset, calRod2Mass, calRod2Length, calRod2Offset, calInputKappa, calInputI0].forEach(inputEl => {
+    [calRod1Mass, calRod1Length, calRod1Offset, calRod2Mass, calRod2Length, calRod2Offset].forEach(inputEl => {
         if (inputEl) {
             inputEl.addEventListener('input', () => {
                 saveRodInputsToStorage();
@@ -1831,20 +1865,44 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Handmatige aanpassingen in Kappa of I0 direct opslaan zonder te worden overschreven
+    if (calInputKappa) {
+        calInputKappa.addEventListener('input', () => {
+            const val = parseNumInput(calInputKappa.value, -1);
+            if (val > 0) {
+                KAPPA = val;
+                localStorage.setItem('cal_kappa', KAPPA);
+                updateSettingsCalDisplay();
+            }
+        });
+    }
+
+    if (calInputI0) {
+        calInputI0.addEventListener('input', () => {
+            const val = parseNumInput(calInputI0.value, -1);
+            if (val >= 0) {
+                I_0 = val;
+                localStorage.setItem('cal_i0', I_0);
+                updateSettingsCalDisplay();
+            }
+        });
+    }
+
     if (btnSaveCalibration) {
         btnSaveCalibration.addEventListener('click', () => {
             saveRodInputsToStorage();
-            const result = processCalibrationCalculations();
-            
-            // Val altijd terug op wat er op dat moment in de invulvelden staat, 
-            // zelfs als er geen recente staafmeting in het geheugen zit!
+
             if (calInputKappa && calInputKappa.value) {
-                KAPPA = parseFloat(calInputKappa.value);
+                KAPPA = parseNumInput(calInputKappa.value, DEFAULT_KAPPA);
                 localStorage.setItem('cal_kappa', KAPPA);
             }
             if (calInputI0 && calInputI0.value) {
-                I_0 = parseFloat(calInputI0.value);
+                I_0 = parseNumInput(calInputI0.value, DEFAULT_I0);
                 localStorage.setItem('cal_i0', I_0);
+            }
+            updateSettingsCalDisplay();
+            if (calStatusHint) {
+                calStatusHint.innerText = `✅ Actief en opgeslagen: κ = ${KAPPA.toFixed(4)} Nm/rad | I₀ = ${I_0.toFixed(5)} kg·m²`;
             }
             alert(t('alertSaved'));
         });
