@@ -1,6 +1,7 @@
 self.addEventListener('install', (e) => {
+  self.skipWaiting();
   e.waitUntil(
-    caches.open('happyracket-store').then((cache) => {
+    caches.open('happyracket-store-v6').then((cache) => {
       return cache.addAll(['./index.html', './styles.css', './script.js', './logo.png']);
     })
   );

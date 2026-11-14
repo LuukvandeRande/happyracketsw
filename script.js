@@ -1,16 +1,25 @@
-// script.js (v5)
+// script.js (v6 - High-Precision Sub-0.2 SW Signal Processing)
 
 // --- Machine Geometrie & Fysica Constanten ---
 const MACHINE_AXIS_CM = 9.05;  // 90.5 mm buttcap tot rotatie-as
 const MACHINE_AXIS_MM = 90.5;
 const STANDARD_AXIS_CM = 10.0; // 100.0 mm industriestandaard
 
-const PREP_DURATION_SEC = 3.0;   // 3 seconden om de machine met de hand aan te zwengelen
-const RECORD_DURATION_SEC = 4.0; // 4 seconden opname voor meer volledige periodes
-const WAIT_DURATION_SEC = 3.0;   // Korte rusttijd na meting
+const PREP_DURATION_SEC = 3.0;        // Max voorbereidingstijd
+const RECORD_DURATION_SEC = 6.5;      // Max opnameduur na auto-trigger (stopt automatisch na 5 schone cycli)
+const TRIGGER_TIMEOUT_SEC = 12.0;     // Timeout als het racket niet wordt losgelaten
+const WAIT_DURATION_SEC = 2.5;        // Korte rusttijd na meting
 
-// Gyroscoop drempelwaarde (rad/s): negeert ruis bij stilstand volledig
-const PEAK_THRESHOLD = 0.25;
+// --- v6 Gyroscoop Signaalverwerking Constanten ---
+const PEAK_THRESHOLD = 0.25;          // Hysteresis drempelwaarde (rad/s) tegen stilstand-ruis
+const RELEASE_TRIGGER_RAD_S = 1.2;    // Auto-trigger drempel bij loslaten (|omega| > 1.2 rad/s)
+const FALLBACK_TRIGGER_RAD_S = 0.70;  // Fallback trigger voor lichtere Twistweight slingeringen na 1.5s
+const SETTLING_CROSSINGS_TO_SKIP = 2; // Sla de eerste 2 nuldoorgangen (1 volledige cyclus) over na loslaten
+const TARGET_CLEAN_CYCLES = 5;        // Meet exact 5 schone volledige cycli na de inslingercyclus
+const TARGET_CLEAN_CROSSINGS = TARGET_CLEAN_CYCLES * 2 + 1; // 11 nuldoorgangen = 5 volledige periodes
+const ZERO_CROSS_WINDOW_MS = 30.0;    // +/- 30 ms venster rond nuldoorgang voor lokale OLS lineaire fit
+const POST_CROSSING_BUFFER_MS = 45.0; // Extra opnamebuffer na laatste nuldoorgang om +/- 30ms venster te vullen
+const ENABLE_DAMPING_CORRECTION = true; // Corrigeer gedempte periode T_d naar ongedempte eigenperiode T_0
 
 // Standaard gekalibreerde machinewaarden (1.8525 Nm/rad en 0.00042 kg·m²)
 const DEFAULT_KAPPA = 1.8525;
@@ -520,35 +529,133 @@ function applyLanguage(lang) {
     }
 }
 
-// --- Gyroscoop & Bewegingssensoren ---
+// --- Gyroscoop & Bewegingssensoren (v6 High-Precision Engine) ---
 let gyroscope = null;
 let sensorAvailable = false;
+
+// v6 Signaalverwerking Buffers & Trigger State
+let rawGyroSamples = [];       // Volledige buffer: [{ t, omega }, ...] met hardware timestamps (ms)
+let axisUnitVec = null;        // 2D eenheidsvector { uy, uz } voor 45-graden telefoonhoek
+let hasTriggeredRelease = false;
+let triggerWaitStartMs = 0;
+let releaseTriggerTimeMs = 0;
+let liveCompleteTimeMs = null; // Tijdstip waarop de 5 schone cycli compleet zijn
+let activeFinishCallback = null;
+let lastHwTimestampMs = 0;
+let devMotionTimeScale = null; // Automatische schaaldetectie voor DeviceMotion timestamps
+
+const statusI18n = {
+    nl: {
+        waitRelease: "Trek het racket uit & laat los! (Auto-start)",
+        settling: "Losgelaten! Eerste cyclus stabiliseren...",
+        measuringCycle: "Slingeringen meten... Cyclus",
+        calWaitRelease: "Trek staaf uit & laat los!"
+    },
+    en: {
+        waitRelease: "Pull racket back & release! (Auto-start)",
+        settling: "Released! Skipping 1st settling cycle...",
+        measuringCycle: "Measuring oscillations... Cycle",
+        calWaitRelease: "Pull rod back & release!"
+    },
+    de: {
+        waitRelease: "Schläger auslenken & loslassen! (Auto-Start)",
+        settling: "Losgelassen! 1. Einschwingzyklus...",
+        measuringCycle: "Schwingungen messen... Zyklus",
+        calWaitRelease: "Stab auslenken & loslassen!"
+    }
+};
+
+function stText(key) {
+    return (statusI18n[currentLang] && statusI18n[currentLang][key]) || statusI18n.nl[key];
+}
 
 function resetGyroTracking() {
     risingCrossTimes = [];
     fallingCrossTimes = [];
     halfPeriodReadings = [];
+    rawGyroSamples = [];
     armedDirection = 0;
     prevOmega = null;
     prevSampleTime = null;
     lastZeroCrossTime = null;
     lastCrossDirection = 0;
     lockedAxis = null;
+    axisUnitVec = null;
+    hasTriggeredRelease = false;
+    triggerWaitStartMs = performance.now();
+    releaseTriggerTimeMs = 0;
+    liveCompleteTimeMs = null;
 }
 
-function handleRawGyroAxes(y, z, now) {
+// Upgrade 1: Hardware Sensor Timestamp normalisatie (elimineert main-thread jitter)
+function normalizeHardwareTimestamp(rawEventTimeMs, intervalVal) {
+    const perfNow = performance.now();
+    if (typeof rawEventTimeMs !== 'number' || isNaN(rawEventTimeMs) || rawEventTimeMs <= 0) {
+        return perfNow;
+    }
+
+    let hwMs = rawEventTimeMs;
+
+    // Sommige oudere WebViews rapporteren microseconden of seconden in plaats van ms
+    if (devMotionTimeScale === null && lastHwTimestampMs > 0) {
+        const rawDelta = Math.abs(rawEventTimeMs - lastHwTimestampMs);
+        if (rawDelta > 1500 && rawDelta < 500000) {
+            devMotionTimeScale = 0.001; // microseconden -> milliseconden
+        } else if (rawDelta > 0 && rawDelta < 0.2) {
+            devMotionTimeScale = 1000.0; // seconden -> milliseconden
+        } else {
+            devMotionTimeScale = 1.0;
+        }
+    }
+
+    if (devMotionTimeScale !== null) {
+        hwMs = rawEventTimeMs * devMotionTimeScale;
+    }
+
+    // Als het event-timestamp identiek is aan het vorige frame, gebruik het hardware-interval
+    if (hwMs <= lastHwTimestampMs && lastHwTimestampMs > 0) {
+        if (typeof intervalVal === 'number' && intervalVal > 0) {
+            const dtMs = intervalVal < 1.0 ? intervalVal * 1000.0 : intervalVal;
+            hwMs = lastHwTimestampMs + dtMs;
+        } else {
+            hwMs = lastHwTimestampMs + 10.0;
+        }
+    }
+
+    lastHwTimestampMs = hwMs;
+    return hwMs;
+}
+
+function handleRawGyroAxes(y, z, hwTimestampMs) {
     if (!isMeasuring) return;
 
-    if (!lockedAxis) {
-        if (Math.abs(y) > PEAK_THRESHOLD || Math.abs(z) > PEAK_THRESHOLD) {
+    const mag = Math.hypot(y, z);
+
+    // Upgrade 4: Auto-Release Trigger (|omega| > 1.2 rad/s, met fallback voor lichte TW metingen)
+    if (!hasTriggeredRelease) {
+        const waitedMs = performance.now() - triggerWaitStartMs;
+        const activeTriggerThreshold = (waitedMs > 1500 && currentMode === 'twist')
+            ? FALLBACK_TRIGGER_RAD_S
+            : RELEASE_TRIGGER_RAD_S;
+
+        if (mag >= activeTriggerThreshold) {
+            hasTriggeredRelease = true;
+            releaseTriggerTimeMs = hwTimestampMs;
+            // Leg de exacte 2D rotatie-as vast (vangt de 45° telefoonhoek in de houder volledig op)
+            axisUnitVec = { uy: y / mag, uz: z / mag };
             lockedAxis = Math.abs(y) >= Math.abs(z) ? 'y' : 'z';
+
+            if (statusMessage && mainActionBtn && mainActionBtn.dataset.state === 'recording') {
+                statusMessage.innerText = stText('settling');
+            }
         } else {
             return;
         }
     }
 
-    const omega = lockedAxis === 'y' ? y : z;
-    processGyroData(omega, now);
+    // Lineaire projectie op de hoofdrotatie-as (behoudt 100% amplitude bij 45° houder en verlaagt ruis met wortel 2)
+    const omega = axisUnitVec ? (y * axisUnitVec.uy + z * axisUnitVec.uz) : (lockedAxis === 'y' ? y : z);
+    processGyroData(omega, hwTimestampMs);
 }
 
 async function startSensors() {
@@ -557,7 +664,11 @@ async function startSensors() {
             gyroscope = new Gyroscope({ frequency: 100 });
             gyroscope.addEventListener('reading', () => {
                 if (!isMeasuring) return;
-                handleRawGyroAxes(gyroscope.y || 0, gyroscope.z || 0, performance.now());
+                // Upgrade 1: Gebruik de directe hardware timestamp van de MEMS-gyroscoop
+                const hwTime = (typeof gyroscope.timestamp === 'number' && gyroscope.timestamp > 0)
+                    ? gyroscope.timestamp
+                    : performance.now();
+                handleRawGyroAxes(gyroscope.y || 0, gyroscope.z || 0, hwTime);
             });
             await gyroscope.start();
             sensorAvailable = true;
@@ -574,7 +685,9 @@ async function startSensors() {
             const degToRad = Math.PI / 180;
             const y = (event.rotationRate.beta || 0) * degToRad;
             const z = (event.rotationRate.gamma || 0) * degToRad;
-            handleRawGyroAxes(y, z, performance.now());
+            // Upgrade 1: Gebruik event.timeStamp / event.interval i.p.v. performance.now()
+            const hwTime = normalizeHardwareTimestamp(event.timeStamp, event.interval);
+            handleRawGyroAxes(y, z, hwTime);
         });
         sensorAvailable = true;
         updateUIState('ready_to_measure');
@@ -586,7 +699,11 @@ async function startSensors() {
     updateUIState('error');
 }
 
-function processGyroData(omega, now) {
+function processGyroData(omega, hwTimeMs) {
+    // Sla elk ruw meetpunt op voor DC-bias correctie en multi-sample regressie achteraf
+    rawGyroSamples.push({ t: hwTimeMs, omega: omega });
+
+    // Real-time hysteresis detector om voortgang en het vaste 5-cycli venster te bewaken
     if (omega > PEAK_THRESHOLD) {
         armedDirection = 1;
     } else if (omega < -PEAK_THRESHOLD) {
@@ -596,20 +713,28 @@ function processGyroData(omega, now) {
     if (prevOmega !== null && prevSampleTime !== null) {
         if (armedDirection === 1 && prevOmega > 0 && omega <= 0) {
             const fraction = prevOmega / (prevOmega - omega);
-            const exactCrossTime = prevSampleTime + fraction * (now - prevSampleTime);
-            recordZeroCrossing(exactCrossTime, -1);
+            const approxCrossTime = prevSampleTime + fraction * (hwTimeMs - prevSampleTime);
+            recordZeroCrossing(approxCrossTime, -1);
             armedDirection = 0;
-        }
-        else if (armedDirection === -1 && prevOmega < 0 && omega >= 0) {
+        } else if (armedDirection === -1 && prevOmega < 0 && omega >= 0) {
             const fraction = Math.abs(prevOmega) / (Math.abs(prevOmega) + omega);
-            const exactCrossTime = prevSampleTime + fraction * (now - prevSampleTime);
-            recordZeroCrossing(exactCrossTime, 1);
+            const approxCrossTime = prevSampleTime + fraction * (hwTimeMs - prevSampleTime);
+            recordZeroCrossing(approxCrossTime, 1);
             armedDirection = 0;
         }
     }
 
     prevOmega = omega;
-    prevSampleTime = now;
+    prevSampleTime = hwTimeMs;
+
+    // Stop automatisch zodra de na-buffer (45 ms) na de 11e schone nuldoorgang binnen is
+    if (liveCompleteTimeMs !== null && (hwTimeMs - liveCompleteTimeMs) >= POST_CROSSING_BUFFER_MS) {
+        if (typeof activeFinishCallback === 'function') {
+            const cb = activeFinishCallback;
+            activeFinishCallback = null;
+            cb();
+        }
+    }
 }
 
 function recordZeroCrossing(crossTime, direction) {
@@ -623,46 +748,347 @@ function recordZeroCrossing(crossTime, direction) {
         const halfPeriodSec = (crossTime - lastZeroCrossTime) / 1000.0;
         const fullPeriodSec = halfPeriodSec * 2.0;
 
-        if (fullPeriodSec >= 0.20 && fullPeriodSec <= 3.00) {
+        if (fullPeriodSec >= 0.18 && fullPeriodSec <= 3.00) {
             halfPeriodReadings.push(fullPeriodSec);
         }
     }
     lastZeroCrossTime = crossTime;
     lastCrossDirection = direction;
+
+    const totalCrossings = risingCrossTimes.length + fallingCrossTimes.length;
+    const neededCrossings = SETTLING_CROSSINGS_TO_SKIP + TARGET_CLEAN_CROSSINGS; // 2 + 11 = 13
+
+    // Update live cyclus-teller in UI tijdens het meten
+    if (totalCrossings > SETTLING_CROSSINGS_TO_SKIP && statusMessage && mainActionBtn && mainActionBtn.dataset.state === 'recording') {
+        const cleanDone = Math.min(
+            TARGET_CLEAN_CYCLES,
+            Math.floor((totalCrossings - SETTLING_CROSSINGS_TO_SKIP) / 2)
+        );
+        statusMessage.innerText = `${stText('measuringCycle')} ${cleanDone}/${TARGET_CLEAN_CYCLES}`;
+    }
+
+    if (totalCrossings >= neededCrossings && liveCompleteTimeMs === null) {
+        liveCompleteTimeMs = crossTime;
+    }
+}
+
+// Hulpfunctie: vind ruwe nuldoorgangen met hysteresis op een willekeurige { t, omega } reeks
+function detectRoughCrossings(samples, threshold) {
+    const crossings = [];
+    let armed = 0;
+    let lastCrossTime = null;
+    let lastDir = 0;
+
+    for (let i = 0; i < samples.length; i++) {
+        const w = samples[i].omega;
+        const tNow = samples[i].t;
+
+        if (w > threshold) armed = 1;
+        else if (w < -threshold) armed = -1;
+
+        if (i > 0) {
+            const wPrev = samples[i - 1].omega;
+            const tPrev = samples[i - 1].t;
+
+            if (armed === 1 && wPrev > 0 && w <= 0) {
+                const frac = wPrev / (wPrev - w);
+                const tCross = tPrev + frac * (tNow - tPrev);
+                if (lastCrossTime === null || ( (tCross - lastCrossTime) >= 70.0 && lastDir !== -1 )) {
+                    crossings.push({ approxTime: tCross, idx: i, direction: -1 });
+                    lastCrossTime = tCross;
+                    lastDir = -1;
+                }
+                armed = 0;
+            } else if (armed === -1 && wPrev < 0 && w >= 0) {
+                const frac = Math.abs(wPrev) / (Math.abs(wPrev) + w);
+                const tCross = tPrev + frac * (tNow - tPrev);
+                if (lastCrossTime === null || ( (tCross - lastCrossTime) >= 70.0 && lastDir !== 1 )) {
+                    crossings.push({ approxTime: tCross, idx: i, direction: 1 });
+                    lastCrossTime = tCross;
+                    lastDir = 1;
+                }
+                armed = 0;
+            }
+        }
+    }
+    return crossings;
+}
+
+// Upgrade 3: Lokale Multi-Sample OLS Lineaire Regressie rond elke nuldoorgang (+/- 30 ms venster)
+function refineCrossingTimeOLS(samples, roughCross, windowMs) {
+    const tCenter = roughCross.approxTime;
+    const localPts = [];
+
+    for (let i = 0; i < samples.length; i++) {
+        const dt = samples[i].t - tCenter;
+        if (Math.abs(dt) <= windowMs) {
+            localPts.push(samples[i]);
+        }
+    }
+
+    // Zorg voor minimaal 4 punten rondom de nuldoorgang (2 ervoor, 2 erna) als de sample-rate laag is
+    if (localPts.length < 4) {
+        const startIdx = Math.max(0, roughCross.idx - 2);
+        const endIdx = Math.min(samples.length - 1, roughCross.idx + 1);
+        localPts.length = 0;
+        for (let i = startIdx; i <= endIdx; i++) {
+            localPts.push(samples[i]);
+        }
+    }
+
+    if (localPts.length < 3) {
+        return roughCross.approxTime;
+    }
+
+    // Fit omega(t) = a * (t - tMean) + b  --> wortel op omega = 0 is tZero = tMean - b / a
+    let sumT = 0;
+    let sumW = 0;
+    const n = localPts.length;
+    for (let i = 0; i < n; i++) {
+        sumT += localPts[i].t;
+        sumW += localPts[i].omega;
+    }
+    const meanT = sumT / n;
+    const meanW = sumW / n;
+
+    let num = 0;
+    let den = 0;
+    for (let i = 0; i < n; i++) {
+        const dt = localPts[i].t - meanT;
+        const dw = localPts[i].omega - meanW;
+        num += dt * dw;
+        den += dt * dt;
+    }
+
+    if (den <= 1e-9 || Math.abs(num) <= 1e-9) {
+        return roughCross.approxTime;
+    }
+
+    const slopeA = num / den;
+    const tZero = meanT - (meanW / slopeA);
+
+    // Veiligheidscheck: de verfijnde nuldoorgang moet binnen het lokale venster liggen
+    if (Math.abs(tZero - tCenter) > windowMs * 1.25) {
+        return roughCross.approxTime;
+    }
+    return tZero;
+}
+
+// Upgrade 2: Ordinary Least Squares (OLS) Lineaire Regressie over alle nuldoorgangen t_k = T * k + t_0
+function computeOLSSlopePeriodSec(crossTimesMs) {
+    if (!crossTimesMs || crossTimesMs.length < 2) return null;
+
+    // Filter eventuele losse stoor-intervallen (> 6% afwijking van de mediaan) voordat we fitten
+    const intervals = [];
+    for (let i = 1; i < crossTimesMs.length; i++) {
+        intervals.push(crossTimesMs[i] - crossTimesMs[i - 1]);
+    }
+    const sortedInt = [...intervals].sort((a, b) => a - b);
+    const medianInt = sortedInt[Math.floor(sortedInt.length / 2)];
+    if (medianInt < 180 || medianInt > 3000) return null;
+
+    // Bouw schone fase-index k op (stapt +1 per periode, of +2 als er ooit een gemiste piek was)
+    const cleanPts = [{ k: 0, t: crossTimesMs[0] }];
+    let currentK = 0;
+    for (let i = 1; i < crossTimesMs.length; i++) {
+        const dt = crossTimesMs[i] - crossTimesMs[i - 1];
+        const stepK = Math.round(dt / medianInt);
+        if (stepK >= 1 && stepK <= 2 && Math.abs(dt - stepK * medianInt) / (stepK * medianInt) < 0.06) {
+            currentK += stepK;
+            cleanPts.push({ k: currentK, t: crossTimesMs[i] });
+        } else {
+            break;
+        }
+    }
+
+    const n = cleanPts.length;
+    if (n < 2) return null;
+
+    let sumK = 0;
+    let sumT = 0;
+    for (let i = 0; i < n; i++) {
+        sumK += cleanPts[i].k;
+        sumT += cleanPts[i].t;
+    }
+    const meanK = sumK / n;
+    const meanT = sumT / n;
+
+    let num = 0;
+    let den = 0;
+    for (let i = 0; i < n; i++) {
+        const dk = cleanPts[i].k - meanK;
+        const dt = cleanPts[i].t - meanT;
+        num += dk * dt;
+        den += dk * dk;
+    }
+
+    if (den <= 0) return null;
+    const periodSec = (num / den) / 1000.0;
+    return { periodSec, weight: den, count: n };
+}
+
+// Upgrade 5: Damping Ratio (Logarithmic Decrement delta) frequentie-correctie
+function computeLogDecrementFactor(samples, cleanCrossings) {
+    if (!ENABLE_DAMPING_CORRECTION || cleanCrossings.length < 5) return 1.0;
+
+    const halfCyclePeaks = [];
+    for (let m = 0; m < cleanCrossings.length - 1; m++) {
+        const tStart = cleanCrossings[m].time;
+        const tEnd = cleanCrossings[m + 1].time;
+        let maxAbsW = 0;
+
+        for (let i = 0; i < samples.length; i++) {
+            const st = samples[i].t;
+            if (st >= tStart && st <= tEnd) {
+                const absW = Math.abs(samples[i].omega);
+                if (absW > maxAbsW) maxAbsW = absW;
+            }
+        }
+        if (maxAbsW > PEAK_THRESHOLD) {
+            halfCyclePeaks.push({ cyclePos: m * 0.5, lnPeak: Math.log(maxAbsW) });
+        }
+    }
+
+    if (halfCyclePeaks.length < 4) return 1.0;
+
+    // Fit ln(omega_peak) = -delta * cyclePos + c via OLS
+    let sumX = 0;
+    let sumY = 0;
+    const n = halfCyclePeaks.length;
+    for (let i = 0; i < n; i++) {
+        sumX += halfCyclePeaks[i].cyclePos;
+        sumY += halfCyclePeaks[i].lnPeak;
+    }
+    const meanX = sumX / n;
+    const meanY = sumY / n;
+
+    let num = 0;
+    let den = 0;
+    for (let i = 0; i < n; i++) {
+        const dx = halfCyclePeaks[i].cyclePos - meanX;
+        const dy = halfCyclePeaks[i].lnPeak - meanY;
+        num += dx * dy;
+        den += dx * dx;
+    }
+
+    if (den <= 0) return 1.0;
+    const delta = -(num / den); // Logaritmisch decrement per volledige cyclus
+
+    // Fysische grenzen voor ondergedempte slinger (0 < delta < 1.2)
+    if (delta <= 0 || delta > 1.2) return 1.0;
+
+    const zetaRatio = delta / (2.0 * Math.PI);
+    return 1.0 / Math.sqrt(1.0 + zetaRatio * zetaRatio);
 }
 
 function computeHighPrecisionPeriod() {
-    let fullCyclePeriods = [];
+    if (!rawGyroSamples || rawGyroSamples.length < 15) return null;
 
-    for (let i = 1; i < risingCrossTimes.length; i++) {
-        const p = (risingCrossTimes[i] - risingCrossTimes[i - 1]) / 1000.0;
-        if (p >= 0.20 && p <= 3.00) fullCyclePeriods.push(p);
+    // Stap 1: Eerste ruwe nuldoorgangen vinden om een exact geheel aantal periodes af te bakenen
+    const pass1Crossings = detectRoughCrossings(rawGyroSamples, PEAK_THRESHOLD);
+    if (pass1Crossings.length < 3) return null;
+
+    // Stap 2: DC-bias berekenen over exact een geheel aantal volledige cycli (voorkomt fase-asymmetrie!)
+    const firstDir = pass1Crossings[0].direction;
+    let lastSameDirCross = pass1Crossings[0];
+    for (let i = pass1Crossings.length - 1; i >= 1; i--) {
+        if (pass1Crossings[i].direction === firstDir) {
+            lastSameDirCross = pass1Crossings[i];
+            break;
+        }
     }
 
-    for (let i = 1; i < fallingCrossTimes.length; i++) {
-        const p = (fallingCrossTimes[i] - fallingCrossTimes[i - 1]) / 1000.0;
-        if (p >= 0.20 && p <= 3.00) fullCyclePeriods.push(p);
+    let dcSum = 0;
+    let dcCount = 0;
+    for (let i = 0; i < rawGyroSamples.length; i++) {
+        const st = rawGyroSamples[i].t;
+        if (st >= pass1Crossings[0].approxTime && st <= lastSameDirCross.approxTime) {
+            dcSum += rawGyroSamples[i].omega;
+            dcCount++;
+        }
+    }
+    const dcBias = dcCount > 10 ? (dcSum / dcCount) : 0;
+
+    // Trek DC-bias af van alle samples
+    const cleanSamples = rawGyroSamples.map(s => ({
+        t: s.t,
+        omega: s.omega - dcBias
+    }));
+
+    // Stap 3: Detecteer nuldoorgangen op het bias-vrije signaal en schat halve periode voor adaptief venster
+    const roughCrossings = detectRoughCrossings(cleanSamples, PEAK_THRESHOLD);
+    if (roughCrossings.length < 3) return null;
+
+    const roughHalfIntervals = [];
+    for (let i = 1; i < roughCrossings.length; i++) {
+        roughHalfIntervals.push(roughCrossings[i].approxTime - roughCrossings[i - 1].approxTime);
+    }
+    roughHalfIntervals.sort((a, b) => a - b);
+    const estHalfPeriodMs = roughHalfIntervals[Math.floor(roughHalfIntervals.length / 2)] || 400.0;
+
+    // Venster voor lokale regressie: +/- 30 ms (of max 32% van halve periode voor hele snelle kalibratiestaven)
+    const effectiveWindowMs = Math.min(ZERO_CROSS_WINDOW_MS, estHalfPeriodMs * 0.32);
+
+    // Verfijn elke nuldoorgang met lokale Multi-Sample OLS Lineaire Regressie
+    const refinedCrossings = roughCrossings.map(rc => ({
+        time: refineCrossingTimeOLS(cleanSamples, rc, effectiveWindowMs),
+        direction: rc.direction
+    }));
+
+    // Stap 4: Sla de eerste 2 nuldoorgangen (1 volledige inslingercyclus) over en pak exact 5 schone cycli (11 crossings)
+    let skipCount = 0;
+    if (refinedCrossings.length >= SETTLING_CROSSINGS_TO_SKIP + 5) {
+        skipCount = SETTLING_CROSSINGS_TO_SKIP;
+    } else if (refinedCrossings.length >= 5) {
+        skipCount = 1;
     }
 
-    const sourceReadings = fullCyclePeriods.length >= 2 ? fullCyclePeriods : halfPeriodReadings;
-    if (!sourceReadings || sourceReadings.length === 0) return null;
+    const windowedCrossings = refinedCrossings.slice(skipCount, skipCount + TARGET_CLEAN_CROSSINGS);
+    if (windowedCrossings.length < 3) return null;
 
-    if (sourceReadings.length <= 2) {
-        return sourceReadings.reduce((a, b) => a + b, 0) / sourceReadings.length;
+    const cleanRising = [];
+    const cleanFalling = [];
+    for (let i = 0; i < windowedCrossings.length; i++) {
+        if (windowedCrossings[i].direction === 1) {
+            cleanRising.push(windowedCrossings[i].time);
+        } else {
+            cleanFalling.push(windowedCrossings[i].time);
+        }
     }
 
-    const sorted = [...sourceReadings].sort((a, b) => a - b);
-    const median = sorted[Math.floor(sorted.length / 2)];
-    const filtered = sorted.filter(p => Math.abs(p - median) / median < 0.05);
-    const listToUse = filtered.length > 0 ? filtered : sorted;
+    // Stap 5: OLS Lineaire Regressie op stijgende én dalende flanken
+    const fitRising = computeOLSSlopePeriodSec(cleanRising);
+    const fitFalling = computeOLSSlopePeriodSec(cleanFalling);
 
-    return listToUse.reduce((a, b) => a + b, 0) / listToUse.length;
+    let dampedPeriodSec = null;
+    if (fitRising && fitFalling) {
+        // Gewogen combinatie op basis van OLS-informatiegewicht sum((k - meanK)^2)
+        dampedPeriodSec = (fitRising.periodSec * fitRising.weight + fitFalling.periodSec * fitFalling.weight) /
+                          (fitRising.weight + fitFalling.weight);
+    } else if (fitRising) {
+        dampedPeriodSec = fitRising.periodSec;
+    } else if (fitFalling) {
+        dampedPeriodSec = fitFalling.periodSec;
+    } else {
+        // Fallback voor hele korte metingen (slechts 3 nuldoorgangen = 1 volledige cyclus)
+        const fullCycleSpan = (windowedCrossings[2].time - windowedCrossings[0].time) / 1000.0;
+        if (fullCycleSpan >= 0.18 && fullCycleSpan <= 3.0) {
+            dampedPeriodSec = fullCycleSpan;
+        }
+    }
+
+    if (!dampedPeriodSec) return null;
+
+    // Stap 6: Correctie voor dempingsfactor (luchtweerstand + lagerwrijving)
+    const dampingCorrectionFactor = computeLogDecrementFactor(cleanSamples, windowedCrossings);
+    return dampedPeriodSec * dampingCorrectionFactor;
 }
 
 // --- Fysica Model (Swingweight & Twistweight) ---
 function calculateRacketMetrics(period) {
     lastMeasuredPeriodSec = period;
-    if (valPeriod) valPeriod.innerText = `${period.toFixed(3)}s`;
+    // Toon periode op 0.1 ms (4 decimalen) zodat sub-0.2 SW stabiliteit direct zichtbaar is
+    if (valPeriod) valPeriod.innerText = `${period.toFixed(4)}s`;
 
     const m_kg = parseNumInput(racketMassInput.value, 305) / 1000.0;
     const bp_m = parseNumInput(racketBalanceInput.value, 32.0) / 100.0;
@@ -736,10 +1162,10 @@ function recalcDerivedMetrics(r) {
 }
 
 function promptManualInput() {
-    const defaultVal = currentMode === 'sw' ? "0.848" : "0.416";
+    const defaultVal = currentMode === 'sw' ? "0.8489" : "0.4160";
     const modeName = currentMode === 'sw' ? t('swTitle') : t('twTitle');
     const hint = currentMode === 'sw' ? "~0.80 - 0.90s" : "~0.38 - 0.45s";
-    
+
     const input = prompt(`${t('manualPrompt')} ${modeName}\n${t('manualPromptDesc')} (${hint}):`, defaultVal);
     if (input) {
         const parsed = parseNumInput(input, -1);
@@ -764,14 +1190,14 @@ function updateUIState(state) {
             if (statusMessage) statusMessage.innerText = t('tapStart');
             break;
         case 'preparing':
-            mainActionBtn.textContent = "Houd klaar...";
+            mainActionBtn.textContent = "Wacht op loslaten...";
             mainActionBtn.classList.add('disabled');
             mainActionBtn.classList.remove('active-measure');
             break;
         case 'recording':
             mainActionBtn.textContent = `${modeLabel} meten...`;
             mainActionBtn.classList.add('disabled');
-            if (statusMessage) statusMessage.innerText = t('recording');
+            mainActionBtn.classList.remove('active-measure');
             break;
         case 'stopping':
             mainActionBtn.textContent = 'OK';
@@ -785,7 +1211,7 @@ function updateUIState(state) {
     }
 }
 
-// --- HOOFDMETING WORKFLOW MET 3 SECONDEN AANZWENGELTIJD ---
+// --- v6 HOOFDMETING WORKFLOW MET AUTO-RELEASE TRIGGER & 5-CYCLI VENSTER ---
 function startMeasurementWorkflow() {
     if (isMeasuring || mainActionBtn.dataset.state === 'preparing') return;
 
@@ -793,54 +1219,69 @@ function startMeasurementWorkflow() {
         DeviceMotionEvent.requestPermission().catch(() => {});
     }
 
-    updateUIState('preparing');
-    let prepCountdown = Math.ceil(PREP_DURATION_SEC);
-    if (statusMessage) statusMessage.innerText = `${t('prepText')} ${prepCountdown}s...`;
-    
     clearInterval(countdownIntervalId);
     clearTimeout(measurementTimeoutId);
-    
-    countdownIntervalId = setInterval(() => {
-        prepCountdown--;
-        if (prepCountdown > 0) {
-            if (statusMessage) statusMessage.innerText = `${t('prepText')} ${prepCountdown}s...`;
-        } else {
-            clearInterval(countdownIntervalId);
-            
-            resetGyroTracking();
-            isMeasuring = true;
-            updateUIState('recording');
 
-            measurementTimeoutId = setTimeout(() => {
-                isMeasuring = false;
-                
-                const avgPeriod = computeHighPrecisionPeriod();
-                if (!avgPeriod || halfPeriodReadings.length < 2) {
-                    if (statusMessage) statusMessage.innerText = t('errQuiet');
-                    mainActionBtn.textContent = `Start ${currentMode === 'sw' ? 'SW' : 'TWIST'}`;
-                    mainActionBtn.dataset.state = 'ready_to_measure';
-                    mainActionBtn.classList.add('active-measure');
-                    mainActionBtn.classList.remove('disabled');
-                    return;
-                }
+    resetGyroTracking();
+    isMeasuring = true;
+    updateUIState('recording');
+    if (statusMessage) statusMessage.innerText = stText('waitRelease');
 
-                const val = calculateRacketMetrics(avgPeriod);
-                if (val === null) {
-                    if (statusMessage) statusMessage.innerText = t('errQuiet');
-                    updateUIState('ready_to_measure');
-                    return;
-                }
+    let finishHandled = false;
+    const finalizeRacketMeasurement = () => {
+        if (finishHandled) return;
+        finishHandled = true;
+        isMeasuring = false;
+        activeFinishCallback = null;
+        clearTimeout(measurementTimeoutId);
+        clearInterval(countdownIntervalId);
 
-                addMeasurementToGroup(val);
-                updateUIState('stopping');
-                startCountdown();
-            }, RECORD_DURATION_SEC * 1000);
+        const avgPeriod = computeHighPrecisionPeriod();
+        if (!avgPeriod || halfPeriodReadings.length < 2) {
+            if (statusMessage) statusMessage.innerText = t('errQuiet');
+            mainActionBtn.textContent = `Start ${currentMode === 'sw' ? 'SW' : 'TWIST'}`;
+            mainActionBtn.dataset.state = 'ready_to_measure';
+            mainActionBtn.classList.add('active-measure');
+            mainActionBtn.classList.remove('disabled');
+            return;
         }
-    }, 1000);
+
+        const val = calculateRacketMetrics(avgPeriod);
+        if (val === null) {
+            if (statusMessage) statusMessage.innerText = t('errQuiet');
+            updateUIState('ready_to_measure');
+            return;
+        }
+
+        addMeasurementToGroup(val);
+        updateUIState('stopping');
+        startCountdown();
+    };
+
+    activeFinishCallback = finalizeRacketMeasurement;
+
+    // Bewaak trigger-timeout (12s) en maximale opnameduur (6.5s) na het loslaten
+    const workflowStartMs = performance.now();
+    let postTriggerTimerStarted = false;
+
+    countdownIntervalId = setInterval(() => {
+        if (!isMeasuring) {
+            clearInterval(countdownIntervalId);
+            return;
+        }
+
+        if (hasTriggeredRelease && !postTriggerTimerStarted) {
+            postTriggerTimerStarted = true;
+            clearTimeout(measurementTimeoutId);
+            measurementTimeoutId = setTimeout(finalizeRacketMeasurement, RECORD_DURATION_SEC * 1000);
+        } else if (!hasTriggeredRelease && (performance.now() - workflowStartMs) > TRIGGER_TIMEOUT_SEC * 1000) {
+            finalizeRacketMeasurement();
+        }
+    }, 100);
 }
 
 function startCountdown() {
-    currentCountdown = WAIT_DURATION_SEC;
+    currentCountdown = Math.ceil(WAIT_DURATION_SEC);
     clearInterval(countdownIntervalId);
     countdownIntervalId = setInterval(() => {
         currentCountdown--;
@@ -909,7 +1350,7 @@ function displayMeasurementsInList(currentMean) {
     });
 }
 
-// --- 2-STAVEN KALIBRATIE MET TELEFOON (STAAF 1 & STAAF 2) ---
+// --- 2-STAVEN KALIBRATIE MET TELEFOON (STAAF 1 & STAAF 2 - v6 Auto-Trigger) ---
 function computeSingleRodInertia(massG, rawLength, rawOffset) {
     const L_m = rawLength > 100 ? rawLength / 1000.0 : rawLength / 100.0;
     const d_m = (rawLength > 100 || rawOffset > 40) ? rawOffset / 1000.0 : rawOffset / 100.0;
@@ -925,69 +1366,88 @@ function startRodCalibrationMeasurement(rodNumber, btnElement) {
     }
 
     const originalText = rodNumber === 1 ? t('calT1Btn') : t('calT2Btn');
-    const calRecordSec = 3.0;
-    let prep = Math.ceil(PREP_DURATION_SEC);
+    const calMaxRecordSec = 4.5;
+
+    resetGyroTracking();
+    isMeasuring = true;
+
     btnElement.disabled = true;
     btnElement.style.backgroundColor = "var(--brand-green)";
     btnElement.style.color = "var(--brand-navy-dark)";
-    btnElement.innerText = `${t('prepText')} ${prep}s...`;
+    btnElement.innerText = stText('calWaitRelease');
 
-    const prepInterval = setInterval(() => {
-        prep--;
-        if (prep > 0) {
-            btnElement.innerText = `${t('prepText')} ${prep}s...`;
-        } else {
-            clearInterval(prepInterval);
-            btnElement.style.backgroundColor = "var(--brand-navy-dark)";
+    let calFinishHandled = false;
+    let calWatchInterval = null;
+    let calMaxTimer = null;
+
+    const finalizeRodMeasurement = () => {
+        if (calFinishHandled) return;
+        calFinishHandled = true;
+        isMeasuring = false;
+        activeFinishCallback = null;
+        clearInterval(calWatchInterval);
+        clearTimeout(calMaxTimer);
+        btnElement.disabled = false;
+
+        const avgPeriod = computeHighPrecisionPeriod();
+        if (!avgPeriod || halfPeriodReadings.length < 2) {
+            btnElement.innerText = t('errQuiet');
+            btnElement.style.backgroundColor = "var(--red-outlier)";
             btnElement.style.color = "#fff";
-            btnElement.innerText = `${t('recording')} (${calRecordSec}s)`;
-
-            resetGyroTracking();
-            isMeasuring = true;
-
             setTimeout(() => {
-                isMeasuring = false;
-                btnElement.disabled = false;
-
-                const avgPeriod = computeHighPrecisionPeriod();
-                if (!avgPeriod || halfPeriodReadings.length < 2) {
-                    btnElement.innerText = t('errQuiet');
-                    btnElement.style.backgroundColor = "var(--red-outlier)";
-                    setTimeout(() => {
-                        btnElement.innerText = originalText;
-                        btnElement.style.backgroundColor = "var(--brand-teal)";
-                        btnElement.style.color = "#fff";
-                    }, 2500);
-                    return;
-                }
-
-                if (rodNumber === 1) {
-                    calReadingsT1.push(avgPeriod);
-                    tempT1 = calReadingsT1.reduce((a, b) => a + b, 0) / calReadingsT1.length;
-                    if (calT1Display) calT1Display.innerText = `${tempT1.toFixed(4)} s`;
-                    if (calCount1Badge) calCount1Badge.innerText = `${calReadingsT1.length}x gemeten`;
-                } else {
-                    calReadingsT2.push(avgPeriod);
-                    tempT2 = calReadingsT2.reduce((a, b) => a + b, 0) / calReadingsT2.length;
-                    if (calT2Display) calT2Display.innerText = `${tempT2.toFixed(4)} s`;
-                    if (calCount2Badge) calCount2Badge.innerText = `${calReadingsT2.length}x gemeten`;
-                }
-
                 btnElement.innerText = originalText;
                 btnElement.style.backgroundColor = "var(--brand-teal)";
                 btnElement.style.color = "#fff";
-
-                const result = processCalibrationCalculations();
-                if (result && tempT1 && tempT2) {
-                    KAPPA = result.kappa;
-                    I_0 = result.i0;
-                    localStorage.setItem('cal_kappa', KAPPA);
-                    localStorage.setItem('cal_i0', I_0);
-                    updateSettingsCalDisplay();
-                }
-            }, calRecordSec * 1000);
+            }, 2500);
+            return;
         }
-    }, 1000);
+
+        if (rodNumber === 1) {
+            calReadingsT1.push(avgPeriod);
+            tempT1 = calReadingsT1.reduce((a, b) => a + b, 0) / calReadingsT1.length;
+            if (calT1Display) calT1Display.innerText = `${tempT1.toFixed(4)} s`;
+            if (calCount1Badge) calCount1Badge.innerText = `${calReadingsT1.length}x gemeten`;
+        } else {
+            calReadingsT2.push(avgPeriod);
+            tempT2 = calReadingsT2.reduce((a, b) => a + b, 0) / calReadingsT2.length;
+            if (calT2Display) calT2Display.innerText = `${tempT2.toFixed(4)} s`;
+            if (calCount2Badge) calCount2Badge.innerText = `${calReadingsT2.length}x gemeten`;
+        }
+
+        btnElement.innerText = originalText;
+        btnElement.style.backgroundColor = "var(--brand-teal)";
+        btnElement.style.color = "#fff";
+
+        const result = processCalibrationCalculations();
+        if (result && tempT1 && tempT2) {
+            KAPPA = result.kappa;
+            I_0 = result.i0;
+            localStorage.setItem('cal_kappa', KAPPA);
+            localStorage.setItem('cal_i0', I_0);
+            updateSettingsCalDisplay();
+        }
+    };
+
+    activeFinishCallback = finalizeRodMeasurement;
+
+    const calStartMs = performance.now();
+    let calTriggered = false;
+
+    calWatchInterval = setInterval(() => {
+        if (!isMeasuring) {
+            clearInterval(calWatchInterval);
+            return;
+        }
+        if (hasTriggeredRelease && !calTriggered) {
+            calTriggered = true;
+            btnElement.style.backgroundColor = "var(--brand-navy-dark)";
+            btnElement.style.color = "#fff";
+            btnElement.innerText = `${t('recording')} (5 cycli)`;
+            calMaxTimer = setTimeout(finalizeRodMeasurement, calMaxRecordSec * 1000);
+        } else if (!hasTriggeredRelease && (performance.now() - calStartMs) > TRIGGER_TIMEOUT_SEC * 1000) {
+            finalizeRodMeasurement();
+        }
+    }, 80);
 }
 
 function saveRodInputsToStorage() {
